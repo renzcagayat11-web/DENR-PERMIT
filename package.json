@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server/server.js",
     "serve-web": "npx http-server -c-1 .",
-    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "deploy": "node deploy-fix.js && npx wrangler deploy --config wrangler.jsonc",
     "preview": "wrangler dev --config wrangler.jsonc"
   },
   "dependencies": {
