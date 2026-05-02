@@ -1,0 +1,40 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Two-factor authentication codes collection
+    match /twoFactorCodes/{docId} {
+      allow create: if request.auth != null && 
+        request.auth.uid == resource.data.userId &&
+        request.time == resource.data.createdAt;
+      
+      allow read: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.token.role in ['admin', 'staff']);
+      
+      allow update: if false; // Codes should not be updated
+      allow delete: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.token.role in ['admin', 'staff']);
+    }
+    
+    // User two-factor settings collection
+    match /userTwoFactor/{docId} {
+      allow create: if request.auth != null && 
+        request.auth.uid == resource.data.userId &&
+        request.time == resource.data.enabledAt;
+      
+      allow read: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.token.role in ['admin', 'staff']);
+      
+      allow update: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.token.role in ['admin', 'staff']);
+      
+      allow delete: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.token.role in ['admin', 'staff']);
+    }
+  }
+}
