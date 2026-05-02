@@ -52,6 +52,53 @@ class FileUploadManager {
     return true;
   }
 
+  // Compress image before upload
+  async compressImage(file) {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith('image/')) {
+        resolve(file); // Not an image, return as-is
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          
+          // Calculate new dimensions (max 1920x1080 for web)
+          const maxWidth = 1920;
+          const maxHeight = 1080;
+          let width = img.width;
+          let height = img.height;
+          
+          if (width > maxWidth || height > maxHeight) {
+            const ratio = Math.min(maxWidth / width, maxHeight / height);
+            width *= ratio;
+            height *= ratio;
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          
+          // Draw and compress
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          canvas.toBlob((blob) => {
+            const compressedFile = new File([blob], file.name, {
+              type: 'image/jpeg',
+              lastModified: Date.now()
+            });
+            resolve(compressedFile);
+          }, 'image/jpeg', 0.85); // 85% quality for good balance
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   // Upload file to Cloudinary with progress tracking
   async uploadFile(file, options = {}) {
     const { 
@@ -63,9 +110,12 @@ class FileUploadManager {
     // Validate file first
     this.validateFile(file, validateOptions);
 
+    // Compress images before upload
+    const fileToUpload = await this.compressImage(file);
+
     return new Promise((resolve, reject) => {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', fileToUpload);
       formData.append('folder', folder);
 
       const xhr = new XMLHttpRequest();
@@ -114,6 +164,14 @@ class FileUploadManager {
 
       xhr.addEventListener('abort', () => {
         reject(new Error('Upload was cancelled'));
+      });
+
+      // Set timeout to prevent getting stuck (2 minutes for faster feedback)
+      xhr.timeout = 120000;
+      
+      // Timeout handling
+      xhr.addEventListener('timeout', () => {
+        reject(new Error('Upload timed out after 2 minutes. Please try a smaller file or check your connection.'));
       });
 
       // Send request

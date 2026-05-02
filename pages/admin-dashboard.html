@@ -4,14 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Admin Dashboard — DENR Permit System</title>
-    <link rel="stylesheet" href="assets/css/admin-dashboard.css" />
+    <link rel="stylesheet" href="/assets/css/admin-dashboard.css" />
   </head>
   <body>
     <div class="dashboard-container">
       <!-- Sidebar -->
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-          <img src="assets/images/logo.png" alt="DENR" class="sidebar-logo" />
+          <img src="/assets/images/logo.png" alt="DENR" class="sidebar-logo" />
           <div class="sidebar-title">DENR-CENRO<br>Sta. Cruz</div>
           <button class="sidebar-toggle-simple" id="sidebarToggle" onclick="toggleSidebar()">
             <span class="toggle-icon">◀</span>
@@ -205,34 +205,7 @@
                       </tr>
                     </thead>
                     <tbody id="recentApplications">
-                      <tr>
-                        <td>DENR-20260424-502361</td>
-                        <td>CAGAYAT LORENCE</td>
-                        <td>Wildlife Permit</td>
-                        <td>Apr 24, 2026 12:00 AM</td>
-                        <td><span class="status-badge pending">PENDING</span></td>
-                      </tr>
-                      <tr>
-                        <td>DENR-20260424-502362</td>
-                        <td>SANTOS MARIA</td>
-                        <td>Tree Cutting Permit</td>
-                        <td>Apr 24, 2026 11:30 PM</td>
-                        <td><span class="status-badge pending">PENDING</span></td>
-                      </tr>
-                      <tr>
-                        <td>DENR-20260424-502363</td>
-                        <td>REYES JUAN</td>
-                        <td>Mining Permit</td>
-                        <td>Apr 24, 2026 10:15 AM</td>
-                        <td><span class="status-badge under-review">UNDER REVIEW</span></td>
-                      </tr>
-                      <tr>
-                        <td>DENR-20260423-502360</td>
-                        <td>GARCIA ANA</td>
-                        <td>Tree Planting Permit</td>
-                        <td>Apr 23, 2026 3:45 PM</td>
-                        <td><span class="status-badge approved">APPROVED</span></td>
-                      </tr>
+                      <!-- Recent applications will be loaded here from database -->
                     </tbody>
                   </table>
                 </div>
@@ -382,6 +355,7 @@
                         <th>Applicant Name</th>
                         <th>Permit Type</th>
                         <th>Date Rejected</th>
+                        <th>Rejected By</th>
                         <th>Rejection Reason</th>
                         <th>Actions</th>
                       </tr>
@@ -1466,8 +1440,8 @@
     </div>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-    <script type="module" src="assets/js/admin-dashboard.js"></script>
-    <script src="assets/js/professional-editor.js"></script>
+    <script type="module" src="/assets/js/admin-dashboard.js"></script>
+    <script src="/assets/js/professional-editor.js"></script>
     
     <!-- Sidebar Toggle Script -->
     <script>

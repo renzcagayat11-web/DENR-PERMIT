@@ -2,7 +2,3 @@ node_modules/
 serviceAccountKey.json
 *.log
 /.env
-deploy/
-public/
-wrangler.jsonc
-.wrangler/

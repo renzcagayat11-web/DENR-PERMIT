@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Staff Dashboard — DENR Permit System</title>
-    <link rel="stylesheet" href="assets/css/staff-dashboard.css" />
+    <link rel="stylesheet" href="/assets/css/staff-dashboard.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
@@ -14,7 +14,7 @@
       <!-- Sidebar -->
       <aside class="sidebar">
         <div class="sidebar-header">
-          <img src="assets/images/logo.png" alt="DENR" class="sidebar-logo" />
+          <img src="/assets/images/logo.png" alt="DENR" class="sidebar-logo" />
           <div class="sidebar-title">DENR-CENRO<br>Sta. Cruz</div>
           <button class="sidebar-toggle-simple" onclick="toggleSidebar()">
             <span class="toggle-icon">⋮</span>
@@ -567,13 +567,7 @@
                 <p>View applications you have rejected</p>
                 <button class="btn-secondary" onclick="showStaffRejected()">View Archive</button>
               </div>
-              <div class="record-card">
-                <div class="record-icon">📊</div>
-                <h3>System Logs</h3>
-                <p>View your system activity logs</p>
-                <button class="btn-secondary" onclick="showStaffLogs()">View Logs</button>
-              </div>
-            </div>
+                          </div>
 
             <!-- Staff Approved Table (hidden by default) -->
             <div id="staffApprovedContainer" style="display:none; margin-top: 32px;">
@@ -777,7 +771,7 @@
                 <div class="profile-header-modern">
                   <div class="profile-avatar-section">
                     <div class="avatar-container">
-                      <img id="settingsAvatar" src="../assets/images/default-avatar.png" alt="Profile" class="profile-avatar-img" />
+                      <img id="settingsAvatar" src="/assets/images/default-avatar.png" alt="Profile" class="profile-avatar-img" />
                       <button class="btn-upload-modern" onclick="document.getElementById('avatarInput').click()">
                         <span class="upload-icon">📷</span>
                         Change Photo
@@ -1451,6 +1445,24 @@
       </div>
     </div>
 
+    <!-- Needs Revision Modal -->
+    <div id="needsRevisionModal" class="modal-backdrop" style="display:none">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3>Request Revision</h3>
+          <button class="modal-close" id="closeNeedsRevisionModal">×</button>
+        </div>
+        <div class="modal-body">
+          <label for="revisionComments">Revision Comments</label>
+          <textarea id="revisionComments" rows="4" placeholder="Enter what needs to be revised (e.g., missing documents, incorrect information)..."></textarea>
+          <div class="modal-actions">
+            <button class="btn-secondary" id="cancelNeedsRevision">Cancel</button>
+            <button class="btn-warning" id="confirmNeedsRevision" style="background: #f59e0b; color: white;">Request Revision</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Documents Modal -->
     <div id="documentsModal" class="modal-backdrop" style="display:none">
       <div class="modal-dialog large-modal">
@@ -1615,8 +1627,8 @@
       </div>
     </div>
 
-    <script src="../assets/js/file-upload-utils.js"></script>
-    <script type="module" src="../assets/js/staff-dashboard.js"></script>
+    <script src="/assets/js/file-upload-utils.js"></script>
+    <script type="module" src="/assets/js/staff-dashboard.js"></script>
     
     <!-- Sidebar Toggle Function -->
     <script>

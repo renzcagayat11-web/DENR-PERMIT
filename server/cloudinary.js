@@ -16,25 +16,35 @@ cloudinary.config({
 
 console.log('Cloudinary configured with cloud_name:', process.env.CLOUDINARY_CLOUD_NAME);
 
-// Configure storage for multer - OPTIMIZED for fast uploads
+// Configure storage for multer - ULTRA OPTIMIZED for fastest uploads
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: 'denr-permits', // Folder name in Cloudinary
     allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx'],
-    // Image optimization for faster uploads
-    quality: 'auto:good', // Automatic quality optimization
-    fetch_format: 'auto', // Auto-select best format
-    // Faster upload settings
-    eager: [], // No eager transformations (faster)
+    // ULTRA FAST: Aggressive image optimization
+    quality: 'auto:eco', // More aggressive compression for speed
+    fetch_format: 'auto', // Auto-select best format (webp for images)
+    // Maximum speed settings
+    eager: [], // No eager transformations (fastest)
     eager_async: false,
+    // Smaller file sizes for faster uploads
+    format: 'auto', // Auto-convert to optimal format
     // Unique filename generation
     public_id: (req, file) => {
-      // Generate unique filename
+      // Generate unique filename - shorter for faster URLs
       const timestamp = Date.now();
-      const randomString = Math.random().toString(36).substring(2, 8); // Shorter random string
-      return `${timestamp}-${randomString}`; // Remove original filename for shorter URLs
-    }
+      const randomString = Math.random().toString(36).substring(2, 6); // Even shorter random string
+      return `${timestamp}-${randomString}`; 
+    },
+    // Additional speed optimizations
+    overwrite: true,
+    invalidate: false, // Skip CDN invalidation for speed
+    resource_type: 'auto', // Auto-detect resource type
+    // Compression settings for documents
+    chunk_size: 6000000, // 6MB chunks for faster uploads
+    use_filename: false, // Don't use original filename (faster)
+    unique_filename: true // Ensure unique names
   }
 });
 
@@ -66,7 +76,7 @@ const uploadSingle = upload.single('file');
 // Upload multiple files
 const uploadMultiple = upload.array('files', 10); // Max 10 files
 
-// Helper function to upload from base64
+// Helper function to upload from base64 - ULTRA OPTIMIZED
 const uploadFromBase64 = async (base64String, fileName, folder = 'denr-permits') => {
   try {
     // Remove file extension from public_id to prevent double extensions
@@ -79,23 +89,43 @@ const uploadFromBase64 = async (base64String, fileName, folder = 'denr-permits')
     
     let result;
     if (isImage) {
-      // Upload images to image/upload
+      // Upload images with ULTRA FAST optimizations
       result = await cloudinary.uploader.upload(base64String, {
         folder: folder,
-        public_id: `${Date.now()}-${nameWithoutExt}`,
-        resource_type: 'image'
+        public_id: `${Date.now()}-${nameWithoutExt.substring(0, 8)}`, // Shorter filename
+        resource_type: 'image',
+        // ULTRA FAST: Maximum compression for speed
+        quality: 'auto:eco', // Most aggressive compression
+        fetch_format: 'auto', // Auto-select best format (webp for images)
+        // Maximum speed settings
+        eager: [], // No eager transformations
+        overwrite: true,
+        invalidate: false, // Skip CDN invalidation for speed
+        format: 'auto', // Auto-convert to optimal format
+        // Additional optimizations
+        chunk_size: 6000000, // 6MB chunks
+        use_filename: false,
+        unique_filename: true,
+        async: false // Synchronous for immediate response
       });
     } else {
-      // Upload documents to raw/upload with no processing
+      // Upload documents with minimal processing
       result = await cloudinary.uploader.upload(base64String, {
         folder: folder,
-        public_id: `${Date.now()}-${nameWithoutExt}`,
+        public_id: `${Date.now()}-${nameWithoutExt.substring(0, 8)}`, // Shorter filename
         resource_type: 'raw',
-        // Disable all processing for documents
+        // Speed optimizations for documents
         format: fileExtension,
-        // No transformations for documents
         overwrite: true,
-        invalidate: true
+        invalidate: false, // Skip CDN invalidation for speed
+        // Minimal processing for maximum speed
+        use_filename: false,
+        unique_filename: true,
+        async: false, // Synchronous upload for immediate response
+        chunk_size: 6000000, // 6MB chunks for faster uploads
+        // Disable all unnecessary processing
+        eager: [],
+        eager_async: false
       });
     }
     

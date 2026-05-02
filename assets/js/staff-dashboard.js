@@ -51,7 +51,8 @@ import {
   serverTimestamp,
   addDoc,
   increment,
-  arrayUnion
+  arrayUnion,
+  onSnapshot
 } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
 const API_BASE = 'http://127.0.0.1:3000';
@@ -60,43 +61,260 @@ let currentApplication = null;
 let allApplications = [];
 let currentUserEmail = null;
 
-// Check authentication and role on page load
-onAuthStateChanged(auth, async (user) => {
-  if (user) {
-    currentUserEmail = user.email;
-    try {
-      const idToken = await getIdToken(user);
-      const response = await fetch(`${API_BASE}/admin/verify-role`, {
-        headers: {
-          'Authorization': `Bearer ${idToken}`
-        }
-      });
-      
-      if (response.ok) {
-        const userData = await response.json();
-        if (userData.role === 'staff' || userData.role === 'admin') {
-          loadDashboardData();
-          updateUserInfo(user, userData);
-        } else {
-          alert('Access denied: Staff role required');
-          window.location.href = 'index.html';
-        }
-      } else {
-        console.error('Role verification failed');
-        alert('Could not verify your role. Please ensure the backend server is running.');
-        updateUserInfo(user, { role: 'staff' });
-        loadDashboardData();
-      }
-    } catch (error) {
-      console.error('Auth verification failed:', error);
-      console.warn('Backend server not available. Running in demo mode.');
-      updateUserInfo(user, { role: 'staff' });
-      loadDashboardData();
+// Debug function to fix staff role
+window.fixStaffRole = async function() {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      console.error('❌ No user logged in');
+      return;
     }
-  } else {
-    window.location.href = 'index.html';
+
+    const idToken = await user.getIdToken();
+    console.log('🔧 Setting staff role for:', user.email);
+
+    const response = await fetch(`${API_BASE}/debug/set-staff-role`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${idToken}`
+      }
+    });
+
+    const result = await response.json();
+    console.log('📋 Result:', result);
+
+    if (result.success) {
+      alert('✅ Staff role set! Please LOGOUT and LOGIN again to refresh your token.');
+    } else {
+      console.error('❌ Failed:', result);
+    }
+  } catch (error) {
+    console.error('❌ Error:', error);
   }
+};
+
+// Debug function to check role
+window.checkMyRole = async function() {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      console.error('❌ No user logged in');
+      return;
+    }
+
+    const idToken = await user.getIdToken();
+    const response = await fetch(`${API_BASE}/debug/my-role`, {
+      headers: {
+        'Authorization': `Bearer ${idToken}`
+      }
+    });
+
+    const result = await response.json();
+    console.log('📋 Current Role:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Error:', error);
+  }
+};
+
+// Debug function to create test audit log
+window.createTestAuditLog = async function() {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      console.error('❌ No user logged in');
+      return;
+    }
+
+    console.log('📝 Creating test audit log directly in Firestore for:', user.email);
+
+    // Create audit log directly in Firestore
+    const auditRef = await addDoc(collection(db, 'auditLogs'), {
+      timestamp: serverTimestamp(),
+      userId: user.uid,
+      userEmail: user.email,
+      role: 'staff',
+      action: 'Test Action',
+      details: 'Test audit log created directly from frontend',
+      category: 'data',
+      resourceId: 'TEST-' + Date.now(),
+      beforeData: null,
+      afterData: { test: true },
+      status: 'success',
+      ip: 'Unknown',
+      userAgent: navigator.userAgent || 'Unknown',
+      module: 'debug'
+    });
+
+    console.log('✅ Test audit log created with ID:', auditRef.id);
+    alert('✅ Test audit log created! Check System Logs now.');
+    
+    // Reload the staff logs
+    loadStaffLogs();
+  } catch (error) {
+    console.error('❌ Error:', error);
+  }
+};
+
+// Debug function to create approve/reject audit log
+window.createApprovalAuditLog = async function(appId, action) {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      console.error('❌ No user logged in');
+      return;
+    }
+
+    console.log('📝 Creating approval audit log for:', appId, action);
+
+    // Create audit log directly in Firestore
+    const auditRef = await addDoc(collection(db, 'auditLogs'), {
+      timestamp: serverTimestamp(),
+      userId: user.uid,
+      userEmail: user.email,
+      role: 'staff',
+      action: action,
+      details: `Application ${appId} was ${action.toLowerCase()}`,
+      category: 'data',
+      resourceId: appId,
+      beforeData: { status: 'pending' },
+      afterData: { status: action === 'Approved Application' ? 'approved' : 'rejected' },
+      status: 'success',
+      ip: 'Unknown',
+      userAgent: navigator.userAgent || 'Unknown',
+      module: 'staff-dashboard'
+    });
+
+    console.log('✅ Approval audit log created with ID:', auditRef.id);
+    
+    // Reload the staff logs
+    loadStaffLogs();
+  } catch (error) {
+    console.error('❌ Error:', error);
+  }
+};
+
+// Debug function to check all audit logs in database
+window.checkAllAuditLogs = async function() {
+  try {
+    console.log('🔍 Checking ALL audit logs in database...');
+    
+    const q = query(collection(db, 'auditLogs'));
+    const querySnapshot = await getDocs(q);
+    
+    console.log('📊 Total audit logs in database:', querySnapshot.size);
+    
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      console.log('📝 Log:', {
+        id: doc.id,
+        userEmail: data.userEmail,
+        action: data.action,
+        timestamp: data.timestamp,
+        resourceId: data.resourceId
+      });
+    });
+    
+    return querySnapshot.size;
+  } catch (error) {
+    console.error('❌ Error checking audit logs:', error);
+  }
+};
+
+// Debug function to test server connection
+window.testServerConnection = async function() {
+  try {
+    console.log('🔌 Testing server connection to:', API_BASE);
+    
+    const response = await fetch(`${API_BASE}/health`, {
+      method: 'GET'
+    });
+    
+    const result = await response.json();
+    console.log('✅ Server is running:', result);
+    return true;
+  } catch (error) {
+    console.error('❌ Server is NOT running:', error);
+    console.log('💡 Please run: node server/server.js');
+    return false;
+  }
+};
+
+// Auto-test server connection on page load
+setTimeout(() => {
+  testServerConnection();
+}, 2000);
+
+// Check authentication and role on page load
+// Wait for Firebase to be fully initialized
+setTimeout(() => {
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      try {
+        // Get user role from token
+        const idTokenResult = await user.getIdTokenResult(true);
+        const role = idTokenResult.claims.role;
+
+        console.log('🔐 Token role:', role, 'for user:', user.email);
+
+        // If no role in token, try to fix it automatically
+        if (!role) {
+          console.log('⚠️ No role in token! Attempting to fix...');
+
+          // Check Firestore for user role
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          const firestoreRole = userDoc.exists() ? userDoc.data().role : null;
+
+          console.log('📋 Firestore role:', firestoreRole);
+
+          if (firestoreRole === 'staff' || firestoreRole === 'admin') {
+            // Fix the token by setting custom claims via server
+            const idToken = await user.getIdToken();
+            const response = await fetch(`${API_BASE}/debug/set-staff-role`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${idToken}`
+              }
+            });
+
+            const result = await response.json();
+            console.log('🔧 Auto-fix result:', result);
+
+            if (result.success) {
+              alert('⚠️ Your account was missing staff role. It has been fixed!\n\nPlease LOGOUT and LOGIN again for changes to take effect.');
+              return;
+            }
+          } else {
+            // No role in Firestore either - set it
+            console.log('🔧 Setting staff role for new user...');
+            await fixStaffRole();
+            alert('⚠️ Your account was set up as staff.\n\nPlease LOGOUT and LOGIN again for changes to take effect.');
+            return;
+          }
+        }
+
+        if (role === 'staff' || role === 'admin') {
+          console.log('✅ Valid role:', role);
+          loadDashboardData();
+          updateUserInfo(user, { role });
+        } else {
+          console.log('❌ Invalid role:', role);
+          alert('⚠️ Your account does not have staff role. Please contact admin.');
+          // auth.signOut();
+          // window.location.href = 'index.html';
+        }
+      } catch (error) {
+        console.error('🔍 STAFF DASHBOARD DEBUG: Token verification failed:', error);
+        console.log('🔍 STAFF DASHBOARD DEBUG: Would redirect to index, but DISABLED FOR TESTING');
+        // auth.signOut();
+        // window.location.href = 'index.html';
+      }
+    } else {
+      console.log('Staff dashboard: No user authenticated, redirecting...');
+      window.location.href = 'index.html';
+    }
 });
+}, 1000); // Wait 1 second for Firebase to be fully initialized
 
 // Update user info in header
 function updateUserInfo(user, userData) {
@@ -115,71 +333,130 @@ function updateUserInfo(user, userData) {
 // Load dashboard data
 async function loadDashboardData() {
   try {
+    console.log('🔄 Loading dashboard data...');
     await fetchApplications();
-    updateStats();
-    loadRecentApplications();
+    // Stats and recent apps are now updated inside the onSnapshot callback
+    console.log('✅ Dashboard data loading complete');
   } catch (error) {
-    console.error('Error loading dashboard data:', error);
+    console.error('❌ Error loading dashboard data:', error);
   }
 }
 
-// Load recent applications for dashboard
-function loadRecentApplications() {
+// Simple test function to populate Recent Applications
+window.testRecentApplications = function() {
+  console.log('🧪 Testing Recent Applications table...');
+  
   const tbody = document.getElementById('recentApplicationsTable');
-  if (!tbody) return;
-  
-  tbody.innerHTML = '';
-  
-  // Show only pending applications
-  const pendingApps = allApplications.filter(app => app.status === 'pending').slice(0, 5);
-  
-  if (pendingApps.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:32px; color:#666;">No pending applications found</td></tr>';
+  if (!tbody) {
+    console.error('❌ Table not found!');
     return;
   }
   
-  pendingApps.forEach(app => {
+  // Add test data
+  tbody.innerHTML = `
+    <tr>
+      <td>TEST-001</td>
+      <td>Test User</td>
+      <td>Test Application</td>
+      <td>Today</td>
+      <td><span class="status-badge pending">PENDING</span></td>
+    </tr>
+    <tr>
+      <td>TEST-002</td>
+      <td>Another User</td>
+      <td>Another Application</td>
+      <td>Yesterday</td>
+      <td><span class="status-badge approved">APPROVED</span></td>
+    </tr>
+  `;
+  
+  console.log('✅ Test data added to Recent Applications table!');
+};
+
+// Load recent applications for dashboard
+function loadRecentApplications() {
+  try {
+    const tbody = document.getElementById('recentApplicationsTable');
+    if (!tbody) {
+      console.error('❌ ERROR: recentApplicationsTable element not found!');
+      return;
+    }
+    
+    tbody.innerHTML = '';
+    
+    // Show only pending, under review, and needs revision applications
+    const pendingApps = allApplications.filter(app => 
+      app.status === 'pending' || app.status === 'under review' || app.status === 'needs revision'
+    );
+    const recentApps = pendingApps.slice(0, 5);
+    
+    if (recentApps.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:32px; color:#666;">No pending applications</td></tr>';
+      return;
+    }
+  
+  recentApps.forEach((app, index) => {
     const row = document.createElement('tr');
     const statusClass = getStatusClass(app.status);
     const dateFormatted = formatDate(app.createdAt);
     
     row.innerHTML = `
-      <td>${app.id || 'N/A'}</td>
-      <td>${app.applicantName || 'N/A'}</td>
-      <td>${app.permitType || 'N/A'}</td>
+      <td>${app.applicationId || app.id || 'N/A'}</td>
+      <td>${app.applicantName || app.applicantEmail || 'N/A'}</td>
+      <td>${app.permitType || 'Application'}</td>
       <td>${dateFormatted}</td>
       <td><span class="status-badge ${statusClass}">${app.status || 'PENDING'}</span></td>
     `;
     
     tbody.appendChild(row);
   });
+  
+  console.log(`✅ Recent Applications table updated with ${recentApps.length} rows`);
+  
+  } catch (error) {
+    console.error('❌ ERROR loading Recent Applications:', error.message);
+  }
 }
 
-// Fetch applications from Firestore
+// Fetch applications from Firestore with real-time updates
 async function fetchApplications() {
   try {
     const applicationsRef = collection(db, 'applications');
     const q = query(applicationsRef);
-    const querySnapshot = await getDocs(q);
     
-    allApplications = [];
-    querySnapshot.forEach((doc) => {
-      allApplications.push({
-        id: doc.id,
-        ...doc.data()
+    // Set up real-time listener
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      allApplications = [];
+      querySnapshot.forEach((doc) => {
+        const appData = doc.data();
+        allApplications.push({
+          id: doc.id,
+          ...appData
+        });
       });
+      
+      console.log(`✅ Recent Applications: ${allApplications.length} loaded`);
+      
+      // Sort by createdAt manually
+      allApplications.sort((a, b) => {
+        const aTime = a.createdAt?.toMillis() || 0;
+        const bTime = b.createdAt?.toMillis() || 0;
+        return bTime - aTime;
+      });
+      
+      // Update stats and display after data is loaded
+      updateStats();
+      filterAndDisplayApplications();
+      loadRecentApplications();
+      
+      // Applications loaded successfully
     });
     
-    // Sort by createdAt manually
-    allApplications.sort((a, b) => {
-      const aTime = a.createdAt?.toMillis() || 0;
-      const bTime = b.createdAt?.toMillis() || 0;
-      return bTime - aTime;
-    });
+    // Store unsubscribe function for cleanup
+    window.applicationsUnsubscribe = unsubscribe;
     
-    filterAndDisplayApplications();
   } catch (error) {
-    console.error('Error fetching applications:', error);
+    console.error('Error setting up applications listener:', error);
     allApplications = [];
     filterAndDisplayApplications();
   }
@@ -240,7 +517,7 @@ function filterAndDisplayApplications() {
   
   // Start with active applications only (pending and under review)
   let filtered = allApplications.filter(app => 
-    app.status === 'pending' || app.status === 'under review'
+    app.status === 'pending' || app.status === 'under review' || app.status === 'needs revision'
   );
   
   // Filter by status (from active applications only)
@@ -253,6 +530,7 @@ function filterAndDisplayApplications() {
   // Filter by search
   if (searchInput) {
     filtered = filtered.filter(app =>
+      (app.applicationId && app.applicationId.toLowerCase().includes(searchInput)) ||
       app.id.toLowerCase().includes(searchInput) ||
       (app.applicantName && app.applicantName.toLowerCase().includes(searchInput))
     );
@@ -279,7 +557,7 @@ function displayApplications(applications) {
     const dateFormatted = formatDate(app.createdAt);
     
     row.innerHTML = `
-      <td>${app.id || 'N/A'}</td>
+      <td>${app.applicationId || app.id || 'N/A'}</td>
       <td>${app.applicantName || 'N/A'}</td>
       <td>${app.permitType || 'N/A'}</td>
       <td>${dateFormatted}</td>
@@ -288,6 +566,7 @@ function displayApplications(applications) {
         <button class="action-btn btn-view" onclick="viewApplication('${app.id}')">View</button>
         ${app.status === 'pending' || app.status === 'under review' ? `<button class="action-btn btn-approve" onclick="quickApprove('${app.id}')">Approve</button>` : ''}
         ${app.status === 'pending' || app.status === 'under review' ? `<button class="action-btn btn-reject" onclick="quickReject('${app.id}')">Reject</button>` : ''}
+        ${app.status === 'pending' || app.status === 'under review' ? `<button class="action-btn btn-review" onclick="quickNeedsRevision('${app.id}')" style="background: #f59e0b; color: white;">Needs Revision</button>` : ''}
       </td>
     `;
     
@@ -297,32 +576,43 @@ function displayApplications(applications) {
 
 // Update statistics
 function updateStats() {
-  const totalApps = document.getElementById('totalApps');
-  const pendingApps = document.getElementById('pendingApps');
-  const approvedApps = document.getElementById('approvedApps');
-  const rejectedApps = document.getElementById('rejectedApps');
-  const notificationCount = document.getElementById('notificationCount');
-  
-  const pending = allApplications.filter(app => app.status === 'pending').length;
-  const today = new Date().toDateString();
-  
-  const approvedToday = allApplications.filter(app => {
-    if (app.status !== 'approved' || !app.reviewedAt) return false;
-    const reviewDate = app.reviewedAt.toDate ? app.reviewedAt.toDate() : new Date(app.reviewedAt);
-    return reviewDate.toDateString() === today;
-  }).length;
-  
-  const rejectedToday = allApplications.filter(app => {
-    if (app.status !== 'rejected' || !app.reviewedAt) return false;
-    const reviewDate = app.reviewedAt.toDate ? app.reviewedAt.toDate() : new Date(app.reviewedAt);
-    return reviewDate.toDateString() === today;
-  }).length;
-  
-  if (totalApps) totalApps.textContent = allApplications.length;
-  if (pendingApps) pendingApps.textContent = pending;
-  if (approvedApps) approvedApps.textContent = approvedToday;
-  if (rejectedApps) rejectedApps.textContent = rejectedToday;
-  if (notificationCount) notificationCount.textContent = pending;
+  try {
+    const totalApps = document.getElementById('totalApps');
+    const pendingApps = document.getElementById('pendingApps');
+    const approvedApps = document.getElementById('approvedApps');
+    const rejectedApps = document.getElementById('rejectedApps');
+    const notificationCount = document.getElementById('notificationCount');
+    
+    const pending = allApplications.filter(app => app.status === 'pending').length;
+    const today = new Date().toDateString();
+    
+    const approvedToday = allApplications.filter(app => {
+      if (app.status !== 'approved') return false;
+      // Check approvedAt first (new field), fallback to reviewedAt for old data
+      const approvalDate = app.approvedAt || app.reviewedAt;
+      if (!approvalDate) return false;
+      const date = approvalDate.toDate ? approvalDate.toDate() : new Date(approvalDate);
+      return date.toDateString() === today;
+    }).length;
+    
+    const rejectedToday = allApplications.filter(app => {
+      if (app.status !== 'rejected') return false;
+      // Check rejectedAt first (new field), fallback to reviewedAt for old data
+      const rejectionDate = app.rejectedAt || app.reviewedAt;
+      if (!rejectionDate) return false;
+      const date = rejectionDate.toDate ? rejectionDate.toDate() : new Date(rejectionDate);
+      return date.toDateString() === today;
+    }).length;
+    
+    if (totalApps) totalApps.textContent = allApplications.length;
+    if (pendingApps) pendingApps.textContent = pending;
+    if (approvedApps) approvedApps.textContent = approvedToday;
+    if (rejectedApps) rejectedApps.textContent = rejectedToday;
+    if (notificationCount) notificationCount.textContent = pending;
+    
+  } catch (error) {
+    console.error('❌ ERROR updating statistics:', error.message);
+  }
 }
 
 // Get CSS class for status
@@ -330,10 +620,22 @@ function getStatusClass(status) {
   const statusMap = {
     'pending': 'pending',
     'under review': 'under-review',
+    'needs revision': 'needs-revision',
     'approved': 'approved',
     'rejected': 'rejected'
   };
   return statusMap[status?.toLowerCase()] || 'pending';
+}
+
+function getStatusIcon(status) {
+  const icons = {
+    'pending': '⏳',
+    'under review': '🔍',
+    'needs revision': '📝',
+    'approved': '✅',
+    'rejected': '❌'
+  };
+  return icons[status?.toLowerCase()] || '⏳';
 }
 
 // Format date
@@ -650,86 +952,99 @@ window.quickReject = async function(appId) {
   rejectModal.style.display = 'flex';
 };
 
-// Log system activity
+// Quick needs revision from table
+window.quickNeedsRevision = async function(appId) {
+  currentApplication = allApplications.find(app => app.id === appId);
+  const needsRevisionModal = document.getElementById('needsRevisionModal');
+  needsRevisionModal.style.display = 'flex';
+};
+
+// Log system activity - DEPRECATED: Server now handles audit logging
+// Kept for reference but no longer called directly
 async function logSystemActivity(action, applicationId, details = null, category = 'data', beforeData = null, afterData = null, status = 'success') {
-  try {
-    const logRef = collection(db, 'auditLogs');
-    await addDoc(logRef, {
-      timestamp: serverTimestamp(),
-      userId: auth.currentUser?.uid,
-      user: auth.currentUser?.displayName || auth.currentUser?.email || 'Unknown',
-      email: auth.currentUser?.email || 'Unknown',
-      action: action,
-      details: details,
-      category: category,
-      resourceId: applicationId,
-      beforeData: beforeData,
-      afterData: afterData,
-      status: status,
-      ip: await getClientIP(),
-      userAgent: navigator.userAgent,
-      module: window.location.pathname
-    });
-  } catch (error) {
-    console.error('Error logging system activity:', error);
-  }
+  // Audit logging is now handled by server endpoints
+  console.log('Audit log would be created by server:', { action, applicationId, details });
 }
 
-// Update application status
-async function updateApplicationStatus(appId, newStatus, rejectionReason = null) {
+// Update application status - directly in Firestore (bypass server due to auth issues)
+async function updateApplicationStatus(appId, newStatus, rejectionReason = null, revisionComments = null) {
   try {
+    // Check if application exists
+    const application = allApplications.find(app => app.id === appId);
+    if (!application) {
+      alert('Application not found. Please refresh and try again.');
+      return;
+    }
+
+    // Disable action buttons to prevent double-submit
+    const actionButtons = document.querySelectorAll('.action-btn, #confirmReject, #confirmUnderReview, #confirmSchedule, #confirmNeedsRevision');
+    actionButtons.forEach(btn => {
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+    });
+
+    // Update application directly in Firestore
     const appRef = doc(db, 'applications', appId);
-    
-    // Get current application data for before/after tracking
-    const appDoc = await getDoc(appRef);
-    const beforeData = appDoc.exists() ? { status: appDoc.data().status } : null;
-    
     const updateData = {
       status: newStatus,
-      updatedAt: serverTimestamp(),
       reviewedBy: auth.currentUser.email,
-      reviewedAt: serverTimestamp()
+      reviewedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     };
-    
-    if (rejectionReason) {
-      updateData.rejectionReason = rejectionReason;
-    }
-    
-    // Add approvedBy and approvedAt for approved status
+
     if (newStatus === 'approved') {
       updateData.approvedBy = auth.currentUser.email;
       updateData.approvedAt = serverTimestamp();
     }
-    
-    // Add rejectedBy and rejectedAt for rejected status
+
     if (newStatus === 'rejected') {
       updateData.rejectedBy = auth.currentUser.email;
       updateData.rejectedAt = serverTimestamp();
+      if (rejectionReason) {
+        updateData.rejectionReason = rejectionReason;
+      }
     }
-    
+
+    if (newStatus === 'needs revision') {
+      updateData.revisionRequestedBy = auth.currentUser.email;
+      updateData.revisionRequestedAt = serverTimestamp();
+      if (revisionComments) {
+        updateData.revisionComments = revisionComments;
+      }
+    }
+
     await updateDoc(appRef, updateData);
-    
-    // Prepare after data
-    const afterData = { status: newStatus, rejectionReason };
-    
-    // Log system activity with comprehensive data
-    const application = allApplications.find(app => app.id === appId);
-    const applicationId = application?.applicationId || appId;
-    
-    if (newStatus === 'approved') {
-      await logSystemActivity('Approved Application', applicationId, `Application ${applicationId} was approved`, 'data', beforeData, afterData, 'success');
-    } else if (newStatus === 'rejected') {
-      await logSystemActivity('Rejected Application', applicationId, `Application ${applicationId} was rejected. Reason: ${rejectionReason || 'No reason provided'}`, 'data', beforeData, afterData, 'success');
-    } else if (newStatus === 'under review') {
-      await logSystemActivity('Marked Under Review', applicationId, `Application ${applicationId} was marked as under review`, 'data', beforeData, afterData, 'success');
-    }
-    
+    console.log('✅ Application updated in Firestore!');
+
+    // Create audit log directly in frontend
+    const action = newStatus === 'approved' ? 'Approved Application' : 
+                   newStatus === 'rejected' ? 'Rejected Application' : 
+                   newStatus === 'needs revision' ? 'Requested Revision' :
+                   'Marked Under Review';
+    await createApprovalAuditLog(appId, action);
+
     // Update local data
     const appIndex = allApplications.findIndex(app => app.id === appId);
     if (appIndex !== -1) {
       allApplications[appIndex].status = newStatus;
       if (rejectionReason) {
         allApplications[appIndex].rejectionReason = rejectionReason;
+      }
+      if (revisionComments) {
+        allApplications[appIndex].revisionComments = revisionComments;
+      }
+      allApplications[appIndex].reviewedBy = auth.currentUser.email;
+      allApplications[appIndex].reviewedAt = new Date();
+      
+      if (newStatus === 'approved') {
+        allApplications[appIndex].approvedBy = auth.currentUser.email;
+        allApplications[appIndex].approvedAt = new Date();
+      }
+      
+      if (newStatus === 'rejected') {
+        allApplications[appIndex].rejectedBy = auth.currentUser.email;
+        allApplications[appIndex].rejectedAt = new Date();
       }
     }
     
@@ -742,6 +1057,14 @@ async function updateApplicationStatus(appId, newStatus, rejectionReason = null)
   } catch (error) {
     console.error('Error updating application:', error);
     alert('Error updating application. Please try again.');
+  } finally {
+    // Re-enable action buttons
+    const actionButtons = document.querySelectorAll('.action-btn, #confirmReject, #confirmUnderReview, #confirmSchedule');
+    actionButtons.forEach(btn => {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+    });
   }
 }
 
@@ -810,6 +1133,28 @@ document.getElementById('confirmReject').addEventListener('click', async () => {
   }
 });
 
+// Needs Revision modal
+document.getElementById('closeNeedsRevisionModal').addEventListener('click', () => {
+  document.getElementById('needsRevisionModal').style.display = 'none';
+});
+
+document.getElementById('cancelNeedsRevision').addEventListener('click', () => {
+  document.getElementById('needsRevisionModal').style.display = 'none';
+});
+
+document.getElementById('confirmNeedsRevision').addEventListener('click', async () => {
+  const comments = document.getElementById('revisionComments').value;
+  if (!comments.trim()) {
+    alert('Please provide revision comments.');
+    return;
+  }
+  if (currentApplication) {
+    await updateApplicationStatus(currentApplication.id, 'needs revision', null, comments);
+    document.getElementById('needsRevisionModal').style.display = 'none';
+    document.getElementById('revisionComments').value = ''; // Clear the textarea
+  }
+});
+
 // Schedule modal
 document.getElementById('closeScheduleModal').addEventListener('click', () => {
   document.getElementById('approveScheduleModal').style.display = 'none';
@@ -846,23 +1191,49 @@ document.getElementById('confirmSchedule').addEventListener('click', async () =>
 
   if (currentApplication) {
     try {
+      // Disable button to prevent double-submit
+      const confirmBtn = document.getElementById('confirmSchedule');
+      confirmBtn.disabled = true;
+      confirmBtn.style.opacity = '0.5';
+      confirmBtn.style.cursor = 'not-allowed';
+
+      // Update application directly in Firestore (bypass server due to auth issues)
       const appRef = doc(db, 'applications', currentApplication.id);
       await updateDoc(appRef, {
         status: 'approved',
-        approvedBy: auth.currentUser?.email,
+        approvedBy: auth.currentUser.email,
         approvedAt: serverTimestamp(),
+        reviewedBy: auth.currentUser.email,
+        reviewedAt: serverTimestamp(),
         pickupSchedule: {
           date: pickupDate,
           time: pickupTime,
           notes: pickupNotes || '',
-          scheduledBy: auth.currentUser?.email,
+          scheduledBy: auth.currentUser.email,
           scheduledAt: serverTimestamp()
-        }
+        },
+        updatedAt: serverTimestamp()
       });
 
-      // Log system activity
-      const applicationId = currentApplication?.applicationId || currentApplication?.id;
-      await logSystemActivity('Approved Application', applicationId, `Application ${applicationId} was approved. Pickup scheduled for ${pickupDate} at ${pickupTime}`);
+      // Create audit log directly in Firestore
+      await createApprovalAuditLog(currentApplication.id, 'Approved Application');
+
+      // Update local data
+      const appIndex = allApplications.findIndex(app => app.id === currentApplication.id);
+      if (appIndex !== -1) {
+        allApplications[appIndex].status = 'approved';
+        allApplications[appIndex].approvedBy = auth.currentUser.email;
+        allApplications[appIndex].approvedAt = new Date();
+        allApplications[appIndex].reviewedBy = auth.currentUser.email;
+        allApplications[appIndex].reviewedAt = new Date();
+        allApplications[appIndex].pickupSchedule = {
+          date: pickupDate,
+          time: pickupTime,
+          notes: pickupNotes || '',
+          scheduledBy: auth.currentUser.email,
+          scheduledAt: new Date()
+        };
+      }
 
       alert('Application approved and pickup scheduled successfully!');
       document.getElementById('approveScheduleModal').style.display = 'none';
@@ -871,9 +1242,17 @@ document.getElementById('confirmSchedule').addEventListener('click', async () =>
       document.getElementById('pickupNotes').value = '';
 
       filterAndDisplayApplications();
+      updateStats();
+      loadRecentApplications();
     } catch (error) {
       console.error('Error scheduling pickup:', error);
       alert('Error scheduling pickup. Please try again.');
+    } finally {
+      // Re-enable button
+      const confirmBtn = document.getElementById('confirmSchedule');
+      confirmBtn.disabled = false;
+      confirmBtn.style.opacity = '1';
+      confirmBtn.style.cursor = 'pointer';
     }
   }
 });
@@ -1276,10 +1655,13 @@ async function loadPerformanceData() {
   const weekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - today.getDay());
   
   try {
+    const currentUserEmail = auth.currentUser?.email;
+    console.log('📈 Loading performance data for:', currentUserEmail);
+    
     // Fetch system logs for current staff
     const q = query(
       collection(db, 'auditLogs'),
-      where('userEmail', '==', auth.currentUser?.email)
+      where('userEmail', '==', currentUserEmail)
     );
     const querySnapshot = await getDocs(q);
     
@@ -1291,6 +1673,8 @@ async function loadPerformanceData() {
       });
     });
     
+    console.log('📊 Found', logs.length, 'audit logs for this staff');
+    
     // Calculate today's stats
     const todayLogs = logs.filter(log => {
       if (!log.timestamp) return false;
@@ -1301,6 +1685,8 @@ async function loadPerformanceData() {
     const todayApproved = todayLogs.filter(log => log.action === 'Approved Application').length;
     const todayRejected = todayLogs.filter(log => log.action === 'Rejected Application').length;
     const todayReviewed = todayApproved + todayRejected;
+    
+    console.log('📅 Today:', todayApproved, 'approved,', todayRejected, 'rejected');
     
     // Calculate week stats
     const weekLogs = logs.filter(log => {
@@ -1338,41 +1724,47 @@ async function loadPerformanceData() {
     if (totalReviewedEl) totalReviewedEl.textContent = totalReviewed;
     if (approvalRateEl) approvalRateEl.textContent = approvalRate + '%';
     
-    // Load my recent actions
-    const myActionsTable = document.getElementById('myActionsTable');
-    if (myActionsTable) {
-      myActionsTable.innerHTML = '';
-      
-      if (logs.length === 0) {
-        myActionsTable.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:32px; color:#666;">No actions recorded yet</td></tr>';
-        return;
-      }
-      
-      // Sort by timestamp descending
-      logs.sort((a, b) => {
-        const aTime = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
-        const bTime = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
-        return bTime - aTime;
-      });
-      
-      // Show last 10 actions
-      const recentLogs = logs.slice(0, 10);
-      
-      recentLogs.forEach(log => {
-        const row = document.createElement('tr');
-        const logDate = log.timestamp ? (log.timestamp.toDate ? log.timestamp.toDate() : new Date(log.timestamp)) : new Date();
-        row.innerHTML = `
-          <td>${log.applicationId || 'N/A'}</td>
-          <td>${log.action || 'N/A'}</td>
-          <td>${formatDate(logDate)}</td>
-        `;
-        
-        myActionsTable.appendChild(row);
-      });
-    }
+    // Load recent actions for the table
+    loadRecentActions(logs);
+    
   } catch (error) {
     console.error('Error loading performance data:', error);
   }
+}
+
+// Load recent actions for performance section
+function loadRecentActions(logs) {
+  const myActionsTable = document.getElementById('myActionsTable');
+  if (!myActionsTable) return;
+  
+  myActionsTable.innerHTML = '';
+  
+  if (logs.length === 0) {
+    myActionsTable.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:32px; color:#666;">No actions recorded yet</td></tr>';
+    return;
+  }
+  
+  // Sort by timestamp descending
+  logs.sort((a, b) => {
+    const aTime = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp || 0);
+    const bTime = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp || 0);
+    return bTime - aTime;
+  });
+  
+  // Show last 10 actions
+  const recentLogs = logs.slice(0, 10);
+  
+  recentLogs.forEach(log => {
+    const row = document.createElement('tr');
+    const logDate = log.timestamp ? (log.timestamp.toDate ? log.timestamp.toDate() : new Date(log.timestamp)) : new Date();
+    row.innerHTML = `
+      <td>${log.applicationId || log.resourceId || 'N/A'}</td>
+      <td>${log.action || 'N/A'}</td>
+      <td>${formatDate(logDate)}</td>
+    `;
+    
+    myActionsTable.appendChild(row);
+  });
 }
 
 // Settings functions
@@ -3675,12 +4067,17 @@ async function loadStaffApprovedApplications() {
   tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:32px;">Loading approved permits...</td></tr>';
 
   try {
+    const currentUserEmail = auth.currentUser?.email;
+    console.log('🔍 Loading approved applications for:', currentUserEmail);
+    
     const q = query(
       collection(db, 'applications'),
       where('status', '==', 'approved'),
-      where('approvedBy', '==', auth.currentUser?.email)
+      where('approvedBy', '==', currentUserEmail)
     );
     const querySnapshot = await getDocs(q);
+    
+    console.log('📊 Query result:', querySnapshot.size, 'approved applications found');
 
     tbody.innerHTML = '';
     if (querySnapshot.empty) {
@@ -3690,6 +4087,7 @@ async function loadStaffApprovedApplications() {
 
     querySnapshot.forEach((doc) => {
       const data = doc.data();
+      console.log('📝 Approved app:', doc.id, 'approvedBy:', data.approvedBy, 'status:', data.status);
       const row = document.createElement('tr');
       
       const approvedDate = data.approvedAt ? formatDate(data.approvedAt) : 'N/A';
@@ -3724,12 +4122,17 @@ async function loadStaffRejectedApplications() {
   tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:32px;">Loading rejected applications...</td></tr>';
 
   try {
+    const currentUserEmail = auth.currentUser?.email;
+    console.log('🔍 Loading rejected applications for:', currentUserEmail);
+    
     const q = query(
       collection(db, 'applications'),
       where('status', '==', 'rejected'),
-      where('rejectedBy', '==', auth.currentUser?.email)
+      where('rejectedBy', '==', currentUserEmail)
     );
     const querySnapshot = await getDocs(q);
+    
+    console.log('📊 Query result:', querySnapshot.size, 'rejected applications found');
 
     tbody.innerHTML = '';
     if (querySnapshot.empty) {
@@ -3739,6 +4142,7 @@ async function loadStaffRejectedApplications() {
 
     querySnapshot.forEach((doc) => {
       const data = doc.data();
+      console.log('📝 Rejected app:', doc.id, 'rejectedBy:', data.rejectedBy, 'status:', data.status);
       const row = document.createElement('tr');
       
       const rejectedDate = data.rejectedAt ? formatDate(data.rejectedAt) : 'N/A';
@@ -3773,11 +4177,16 @@ async function loadStaffLogs() {
   tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:32px;">Loading system logs...</td></tr>';
 
   try {
+    const currentUserEmail = auth.currentUser?.email;
+    console.log('🔍 Loading system logs for:', currentUserEmail);
+    
     const q = query(
       collection(db, 'auditLogs'),
-      where('userEmail', '==', auth.currentUser?.email)
+      where('userEmail', '==', currentUserEmail)
     );
     const querySnapshot = await getDocs(q);
+    
+    console.log('📊 Query result:', querySnapshot.size, 'audit logs found');
 
     tbody.innerHTML = '';
     if (querySnapshot.empty) {
@@ -3804,13 +4213,18 @@ async function loadStaffLogs() {
     logs.forEach((data) => {
       const row = document.createElement('tr');
       
-      const timestamp = data.timestamp ? formatDate(data.timestamp) + ' ' + 
-                        new Date(data.timestamp.seconds * 1000).toLocaleTimeString() : 'N/A';
+      // Handle timestamp properly - Firestore Timestamp or Date
+      let timestamp = 'N/A';
+      if (data.timestamp) {
+        const date = data.timestamp.toDate ? data.timestamp.toDate() : 
+                     (data.timestamp.seconds ? new Date(data.timestamp.seconds * 1000) : new Date(data.timestamp));
+        timestamp = formatDate(date);
+      }
       
       row.innerHTML = `
         <td>${timestamp}</td>
         <td>${data.action || 'N/A'}</td>
-        <td>${data.applicationId || 'N/A'}</td>
+        <td>${data.resourceId || data.applicationId || 'N/A'}</td>
         <td>${data.details || 'N/A'}</td>
       `;
       

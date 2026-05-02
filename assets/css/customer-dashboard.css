@@ -2651,6 +2651,12 @@ body* {
   border: 1px solid #93c5fd;
 }
 
+.status-badge.needs-revision {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: #92400e;
+  border: 1px solid #fbbf24;
+}
+
 .status-badge.approved {
   background: linear-gradient(135deg, #d1fae5 0%, #bbf7d0 100%);
   color: #065f46;

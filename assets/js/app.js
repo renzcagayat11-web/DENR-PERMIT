@@ -1,5 +1,6 @@
 import { auth, db } from './firebase-config.js';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendEmailVerification, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+import { collection, query, where, getDocs, doc, getDoc, setDoc, orderBy, limit, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
 // Load website content from Firebase
 async function loadWebsiteContent() {
@@ -49,22 +50,51 @@ async function loadWebsiteContent() {
     const announcementQuery = query(welcomeRef, where('type', '==', 'announcement'), where('active', '==', true));
     const announcementSnapshot = await getDocs(announcementQuery);
     
-    // Get existing announcements section
-    const existingAnnouncementsSection = document.getElementById('announcementsSection');
-    const announcementsList = existingAnnouncementsSection ? existingAnnouncementsSection.querySelector('.announcements-list') : null;
+    // Get announcements slider elements
+    const sliderTrack = document.getElementById('sliderTrack');
+    const sliderDots = document.getElementById('sliderDots');
     
-    if (!announcementSnapshot.empty && announcementsList) {
-      // Append dynamic announcements to existing static announcements
-      announcementSnapshot.forEach((doc) => {
+    if (!announcementSnapshot.empty && sliderTrack) {
+      // Clear existing content
+      sliderTrack.innerHTML = '';
+      if (sliderDots) sliderDots.innerHTML = '';
+      
+      // Add dynamic announcements to slider
+      announcementSnapshot.forEach((doc, index) => {
         const announcement = doc.data();
-        const announcementCard = document.createElement('div');
-        announcementCard.className = 'announcement-card';
-        announcementCard.innerHTML = `
-          <h3>${announcement.title}</h3>
-          <p>${announcement.content}</p>
+        const announcementSlide = document.createElement('div');
+        announcementSlide.className = 'update-slide';
+        announcementSlide.innerHTML = `
+          <div class="announcement-card">
+            <div class="announcement-header">
+              <h3>${announcement.title}</h3>
+              <span class="announcement-badge new-badge">NEW</span>
+            </div>
+            <div class="announcement-content">
+              <div class="announcement-body">
+                <p>${announcement.content}</p>
+              </div>
+            </div>
+            <div class="announcement-footer">
+              <span class="announcement-date">Posted: ${announcement.createdAt ? new Date(announcement.createdAt.toDate()).toLocaleDateString() : 'Today'}</span>
+            </div>
+          </div>
         `;
-        announcementsList.appendChild(announcementCard);
+        sliderTrack.appendChild(announcementSlide);
+        
+        // Add dot indicator
+        if (sliderDots) {
+          const dot = document.createElement('button');
+          dot.className = 'indicator-dot' + (index === 0 ? ' active' : '');
+          dot.setAttribute('aria-label', `Go to announcement ${index + 1}`);
+          sliderDots.appendChild(dot);
+        }
       });
+      
+      // Initialize slider functionality if announcements exist
+      if (typeof initializeSlider === 'function') {
+        initializeSlider();
+      }
     }
 
     // Load permit types
@@ -344,8 +374,11 @@ document.addEventListener('DOMContentLoaded', () => {
   if (authSigninBtn) {
     authSigninBtn.addEventListener('click', async () => {
       try {
+        console.log('🔍 LOGIN DEBUG: Starting login process');
         const email = authEmail.value.trim(); 
         const pass = authPassword.value;
+        console.log('🔍 LOGIN DEBUG: Email:', email);
+        
         let isValid = true;
         
         // Clear previous errors
@@ -371,42 +404,80 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         if (!isValid) return;
+        
+        console.log('🔍 LOGIN DEBUG: Calling signInWithEmailAndPassword');
         const cred = await signInWithEmailAndPassword(auth, email, pass);
+        console.log('🔍 LOGIN DEBUG: Sign in successful, user:', cred.user.email);
+        
         // Allow admin and staff to sign in even if email not verified
         try{
+          console.log('🔍 LOGIN DEBUG: Getting ID token result');
           const idToken = await cred.user.getIdTokenResult(true);
+          console.log('🔍 LOGIN DEBUG: ID token claims:', idToken.claims);
+          
           let role = idToken.claims.role;
+          console.log('🔍 LOGIN DEBUG: Role from token:', role);
+          
           if(!role){
+            console.log('🔍 LOGIN DEBUG: No role in token, checking Firestore');
             // fallback to Firestore users doc
             try{
               const udoc = await getDoc(doc(db,'users',cred.user.uid));
+              console.log('🔍 LOGIN DEBUG: Firestore user doc exists:', udoc.exists());
+              if (udoc.exists()) {
+                console.log('🔍 LOGIN DEBUG: Firestore user data:', udoc.data());
+              }
               role = (udoc.exists() && udoc.data().role) ? udoc.data().role : 'customer';
-            }catch(e){ role = 'customer' }
+              console.log('🔍 LOGIN DEBUG: Final role from Firestore:', role);
+            }catch(e){ 
+              console.log('🔍 LOGIN DEBUG: Error getting Firestore doc:', e);
+              role = 'customer' 
+            }
           }
+          
           // Customers MUST have email verified
           if(role === 'customer' && !cred.user.emailVerified){
+            console.log('🔍 LOGIN DEBUG: Customer email not verified');
             authMsg.textContent = 'Email not verified. Please check your inbox and click the verification link.'; 
             authResendBtn.style.display = '';
             return;
           }
+          
           // Admin and staff can sign in without verification
+          console.log('🔍 LOGIN DEBUG: Login successful, role:', role);
           authMsg.textContent = 'Signed in: ' + cred.user.email + ' (role: '+role+')'; 
           authResendBtn.style.display = 'none';
           closeAuthModal();
 
           // Clear the justLoggedOut flag so onAuthStateChanged can redirect properly
           sessionStorage.removeItem('justLoggedOut');
+          
+          // TEMPORARILY DISABLED REDIRECTS FOR TESTING
+          // Set flag to prevent onAuthStateChanged from redirecting again
+          sessionStorage.setItem('loginRedirect', 'true');
 
           // Redirect based on role
+          console.log('🔍 LOGIN DEBUG: About to redirect based on role');
+          console.log('🔍 LOGIN DEBUG: Role detected:', role, '- User should go to:', role + '-dashboard.html');
           if(role === 'admin'){
-            window.location.href = 'admin-dashboard.html';
+            console.log('🔍 LOGIN DEBUG: Redirecting to admin dashboard');
+            window.location.href = '/admin-dashboard.html';
           } else if(role === 'staff'){
-            window.location.href = 'staff-dashboard.html';
+            console.log('🔍 LOGIN DEBUG: Redirecting to staff dashboard');
+            window.location.href = '/staff-dashboard.html';
           } else if(role === 'customer'){
-            window.location.href = 'customer-dashboard.html';
+            console.log('🔍 LOGIN DEBUG: Redirecting to customer dashboard');
+            window.location.href = '/customer-dashboard.html';
           }
-        }catch(e){ authMsg.textContent = 'Signed in: ' + cred.user.email; closeAuthModal(); }
-      } catch (err) { authMsg.textContent = 'Sign in error: ' + err.message }
+        }catch(e){ 
+          console.log('🔍 LOGIN DEBUG: Error in token processing:', e);
+          authMsg.textContent = 'Signed in: ' + cred.user.email; 
+          closeAuthModal(); 
+        }
+      } catch (err) { 
+        console.log('🔍 LOGIN DEBUG: Sign in error:', err);
+        authMsg.textContent = 'Sign in error: ' + err.message 
+      }
     });
 
     // Allow Enter key to trigger login
@@ -743,14 +814,41 @@ q('#refreshAnalytics').addEventListener('click', async () => {
 
 // Auth state
 onAuthStateChanged(auth, async user => {
+  console.log('🔍 AUTH STATE DEBUG: Auth state changed, user:', user?.email);
+  
+  // Check if login redirect flag is set (means login function already handled redirect)
+  if (sessionStorage.getItem('loginRedirect') === 'true') {
+    console.log('🔍 AUTH STATE DEBUG: Login redirect flag detected, skipping redirect');
+    sessionStorage.removeItem('loginRedirect'); // Clear the flag
+    return;
+  }
+  
   if (user) {
+    console.log('🔍 AUTH STATE DEBUG: User is logged in');
     signoutBtn.style.display = '';
     authEmail.value = user.email;
     try {
+      console.log('🔍 AUTH STATE DEBUG: Getting ID token result');
       const t = await user.getIdTokenResult(true);
+      console.log('🔍 AUTH STATE DEBUG: Token claims:', t.claims);
+      
       let role = t.claims.role;
+      console.log('🔍 AUTH STATE DEBUG: Role from token:', role);
+      
       if(!role){
-        try{ const udoc = await getDoc(doc(db,'users',user.uid)); role = (udoc.exists() && udoc.data().role) ? udoc.data().role : 'customer'; }catch(e){ role = 'customer' }
+        console.log('🔍 AUTH STATE DEBUG: No role in token, checking Firestore');
+        try{ 
+          const udoc = await getDoc(doc(db,'users',user.uid));
+          console.log('🔍 AUTH STATE DEBUG: Firestore doc exists:', udoc.exists());
+          if (udoc.exists()) {
+            console.log('🔍 AUTH STATE DEBUG: Firestore data:', udoc.data());
+          }
+          role = (udoc.exists() && udoc.data().role) ? udoc.data().role : 'customer';
+          console.log('🔍 AUTH STATE DEBUG: Final role from Firestore:', role);
+        }catch(e){ 
+          console.log('🔍 AUTH STATE DEBUG: Error getting Firestore doc:', e);
+          role = 'customer' 
+        }
       }
       // For customers require email verification; admin/staff may sign in without verification
       if(role === 'customer'){
@@ -759,31 +857,46 @@ onAuthStateChanged(auth, async user => {
           authMsg.textContent = 'Please verify your email to access customer features.'; authResendBtn.style.display = '';
           q('#customerSection').style.display = 'none';
         } else {
-          // Customer is logged in and verified - redirect to customer dashboard
+          // Customer is logged in and verified - redirect to customer dashboard only if on login/auth pages
           // (handles browser back button - user shouldn't stay on login page)
-          if (!sessionStorage.getItem('justLoggedOut')) {
-            window.location.href = 'customer-dashboard.html';
-            return;
-          }
+          const currentPage = window.location.pathname;
+          const isAuthPage = currentPage.includes('index.html') || currentPage === '/' || currentPage.endsWith('/');
+          console.log('🔍 AUTH STATE DEBUG: Customer redirect check - currentPage:', currentPage, 'isAuthPage:', isAuthPage, 'justLoggedOut:', sessionStorage.getItem('justLoggedOut'));
+          console.log('🔍 AUTH STATE DEBUG: CUSTOMER REDIRECT DISABLED FOR TESTING - Would redirect to customer-dashboard.html');
+          // if (!sessionStorage.getItem('justLoggedOut') && isAuthPage) {
+          //   console.log('🔍 AUTH STATE DEBUG: Redirecting customer to dashboard');
+          //   window.location.href = '/customer-dashboard.html';
+          //   return;
+          // }
           authResendBtn.style.display = 'none';
           userInfo.textContent = `${user.email} (role: ${role})`;
           q('#customerSection').style.display = '';
         }
       } else if (role === 'admin') {
-        // Admin is logged in - redirect to admin dashboard
-        if (!sessionStorage.getItem('justLoggedOut')) {
-          window.location.href = 'admin-dashboard.html';
-          return;
-        }
+        // Admin is logged in - redirect to admin dashboard only if on login/auth pages
+        const currentPage = window.location.pathname;
+        const isAuthPage = currentPage.includes('index.html') || currentPage === '/' || currentPage.endsWith('/');
+        console.log('🔍 AUTH STATE DEBUG: Admin redirect check - currentPage:', currentPage, 'isAuthPage:', isAuthPage, 'justLoggedOut:', sessionStorage.getItem('justLoggedOut'));
+        console.log('🔍 AUTH STATE DEBUG: ADMIN REDIRECT DISABLED FOR TESTING - Would redirect to admin-dashboard.html');
+        // if (!sessionStorage.getItem('justLoggedOut') && isAuthPage) {
+        //   console.log('🔍 AUTH STATE DEBUG: Redirecting admin to dashboard');
+        //   window.location.href = '/admin-dashboard.html';
+        //   return;
+        // }
         authResendBtn.style.display = 'none';
         userInfo.textContent = `${user.email} (role: ${role})`;
         q('#customerSection').style.display = '';
       } else if (role === 'staff') {
-        // Staff is logged in - redirect to staff dashboard
-        if (!sessionStorage.getItem('justLoggedOut')) {
-          window.location.href = 'staff-dashboard.html';
-          return;
-        }
+        // Staff is logged in - redirect to staff dashboard only if on login/auth pages
+        const currentPage = window.location.pathname;
+        const isAuthPage = currentPage.includes('index.html') || currentPage === '/' || currentPage.endsWith('/');
+        console.log('🔍 AUTH STATE DEBUG: Staff redirect check - currentPage:', currentPage, 'isAuthPage:', isAuthPage, 'justLoggedOut:', sessionStorage.getItem('justLoggedOut'));
+        console.log('🔍 AUTH STATE DEBUG: STAFF REDIRECT DISABLED FOR TESTING - Would redirect to staff-dashboard.html');
+        // if (!sessionStorage.getItem('justLoggedOut') && isAuthPage) {
+        //   console.log('🔍 AUTH STATE DEBUG: Redirecting staff to dashboard');
+        //   window.location.href = '/staff-dashboard.html';
+        //   return;
+        // }
         authResendBtn.style.display = 'none';
         userInfo.textContent = `${user.email} (role: ${role})`;
         q('#customerSection').style.display = '';

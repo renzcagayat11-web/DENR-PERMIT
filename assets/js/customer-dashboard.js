@@ -17,7 +17,8 @@ import {
   setDoc,
   deleteDoc,
   where,
-  serverTimestamp
+  serverTimestamp,
+  onSnapshot
 } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 import {
   sendPasswordResetEmail
@@ -26,6 +27,41 @@ import {
 // File upload settings - MAX 5MB per file for fast uploads
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
 const MAX_FILE_SIZE_MB = 5;
+
+// Helper function to upload file to Cloudinary with error handling
+async function uploadToCloudinary(file, folder = 'denr-permits') {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('folder', folder);
+    
+    console.log(`Uploading ${file.name} to Cloudinary...`);
+    
+    const uploadResponse = await fetch('/upload-file-to-cloudinary', {
+      method: 'POST',
+      body: formData
+    });
+    
+    // Check if response is ok
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      console.error('Cloudinary upload failed:', errorText);
+      throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+    }
+    
+    const uploadResult = await uploadResponse.json();
+    
+    if (!uploadResult.success) {
+      throw new Error(uploadResult.error || 'Upload failed');
+    }
+    
+    console.log('Cloudinary upload successful:', uploadResult.url);
+    return uploadResult;
+  } catch (error) {
+    console.error('Cloudinary upload error:', error);
+    throw error;
+  }
+}
 
 // IndexedDB for persistent file storage (edit mode)
 const EDIT_DB_NAME = 'DENREditFileStorage';
@@ -147,6 +183,12 @@ function hideModal(modalId) {
     modal.classList.remove('show');
     // Restore body scroll
     document.body.style.overflow = '';
+    // Unsubscribe from Firestore real-time listener if any
+    if (modalId === 'applicationModal' && window._appModalUnsubscribe) {
+      window._appModalUnsubscribe();
+      window._appModalUnsubscribe = null;
+      console.log('Unsubscribed from Firestore real-time listener');
+    }
     
     // Remove ESC key listener
     document.removeEventListener('keydown', handleModalEscape);
@@ -446,11 +488,16 @@ document.addEventListener('DOMContentLoaded', function() {
 // Check authentication on page load
 onAuthStateChanged(auth, async (user) => {
   if (user) {
+    console.log('Customer dashboard: User authenticated:', user.email);
+    console.log('Customer dashboard: User UID:', user.uid);
+    
     // Check if email is verified for customers
     try {
+      console.log('Customer dashboard: Fetching user document from Firestore...');
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (userDoc.exists()) {
         const userData = userDoc.data();
+        console.log('Customer dashboard: User document found:', userData);
         currentUserData = {
           ...userData,
           uid: user.uid // Add uid from Firebase Auth
@@ -467,13 +514,16 @@ onAuthStateChanged(auth, async (user) => {
         
         // Check Firebase Auth emailVerified property
         if (userData.role === 'customer' && !user.emailVerified) {
+          console.log('Customer dashboard: Email not verified, redirecting...');
           showAlert('Please verify your email before accessing the dashboard. Check your inbox for the verification link.', 'warning');
           window.location.href = 'index.html';
           return;
         }
         
+        console.log('Customer dashboard: User role:', userData.role);
         if (userData.role !== 'customer') {
           // Redirect to appropriate dashboard based on role
+          console.log('Customer dashboard: Redirecting to role-specific dashboard:', userData.role);
           if (userData.role === 'admin') {
             window.location.href = 'admin-dashboard.html';
           } else if (userData.role === 'staff') {
@@ -482,6 +532,7 @@ onAuthStateChanged(auth, async (user) => {
           return;
         }
         
+        console.log('Customer dashboard: Loading dashboard data for customer...');
         loadDashboardData();
         updateUserInfo(user, userData);
 
@@ -489,27 +540,23 @@ onAuthStateChanged(auth, async (user) => {
         // localStorage is already cleared on logout
       } else {
         // User document doesn't exist, create it
-        console.warn('User document not found in database, creating user document');
+        console.warn('Customer dashboard: User document not found in database, creating user document');
         currentUserData = {
           uid: user.uid, // Add uid from Firebase Auth
           firstName: user.displayName?.split(' ')[0] || '',
           surname: user.displayName?.split(' ')[1] || '',
           email: user.email,
-          role: 'customer',
+          role: 'customer', // Default role for new users
           emailVerified: user.emailVerified,
-          createdAt: serverTimestamp()
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
         };
         
-        // Create user document in database
+        console.log('Customer dashboard: Creating new user document:', currentUserData);
         await setDoc(doc(db, 'users', user.uid), currentUserData);
+        console.log('Customer dashboard: User document created successfully');
         
-        // Check email verification from Firebase Auth
-        if (!user.emailVerified) {
-          showAlert('Please verify your email before accessing the dashboard. Check your inbox for the verification link.', 'warning');
-          window.location.href = 'index.html';
-          return;
-        }
-        
+        console.log('Customer dashboard: Loading dashboard data for new customer...');
         loadDashboardData();
         updateUserInfo(user, currentUserData);
       }
@@ -723,29 +770,7 @@ window.saveSettings = async function() {
   }
 };
 
-window.saveNotificationSettings = async function() {
-  try {
-    const notifyNewApp = document.getElementById('notifyNewApp').checked;
-    const notifyStatusChange = document.getElementById('notifyStatusChange').checked;
-    const notifyWeekly = document.getElementById('notifyWeekly').checked;
-    
-    // Update notification preferences in Firebase
-    const userRef = doc(db, 'users', auth.currentUser.uid);
-    await updateDoc(userRef, {
-      notificationPreferences: {
-        newApplication: notifyNewApp,
-        statusChange: notifyStatusChange,
-        weeklySummary: notifyWeekly
-      },
-      updatedAt: serverTimestamp()
-    });
-    
-    showAlert('Notification preferences saved successfully!', 'success');
-  } catch (error) {
-    console.error('Error saving notification settings:', error);
-    showAlert('Error saving notification settings. Please try again.', 'error');
-  }
-};
+// Note: saveNotificationSettings is defined later in the file (line 3031) with more complete implementation
 
 // Enhanced Password Change Functionality for Customer Dashboard
 window.changePassword = async function() {
@@ -1954,23 +1979,38 @@ async function loadTimeline() {
 // Fetch user's applications
 async function fetchUserApplications() {
   try {
-    console.log('Fetching applications for user:', auth.currentUser.uid);
+    if (!auth.currentUser) {
+      console.error('Customer dashboard: No authenticated user found');
+      return;
+    }
+    
+    console.log('Customer dashboard: Fetching applications for user:', auth.currentUser.uid);
+    console.log('Customer dashboard: User email:', auth.currentUser.email);
+    
     const applicationsRef = collection(db, 'applications');
     const q = query(
       applicationsRef, 
       where('applicantUid', '==', auth.currentUser.uid)
     );
+    
+    console.log('Customer dashboard: Executing query...');
     const querySnapshot = await getDocs(q);
     
-    console.log('Query snapshot size:', querySnapshot.size);
+    console.log('Customer dashboard: Query snapshot size:', querySnapshot.size);
+    console.log('Customer dashboard: Query snapshot docs:', querySnapshot.docs.length);
     
     userApplications = [];
     querySnapshot.forEach((doc) => {
-      userApplications.push({
+      const appData = {
         id: doc.id,
         ...doc.data()
-      });
+      };
+      console.log('Customer dashboard: Found application:', appData.applicationId, 'Status:', appData.status);
+      userApplications.push(appData);
     });
+    
+    console.log('Customer dashboard: Total user applications:', userApplications.length);
+    console.log('Customer dashboard: User applications data:', userApplications);
     
     // Sort by createdAt manually
     userApplications.sort((a, b) => {
@@ -1979,7 +2019,7 @@ async function fetchUserApplications() {
       return bTime - aTime;
     });
     
-    console.log('User applications:', userApplications);
+    console.log('Customer dashboard: Calling displayApplications...');
     displayApplications();
   } catch (error) {
     console.error('Error fetching applications:', error);
@@ -1991,25 +2031,34 @@ async function fetchUserApplications() {
 // Display applications in table
 function displayApplications() {
   const tbody = document.getElementById('applicationsTable');
-  console.log('displayApplications called, tbody:', tbody);
-  console.log('userApplications length:', userApplications.length);
+  console.log('Customer dashboard: displayApplications called');
+  console.log('Customer dashboard: tbody element:', tbody);
+  console.log('Customer dashboard: userApplications length:', userApplications.length);
   
-  if (!tbody) return;
+  if (!tbody) {
+    console.error('Customer dashboard: applicationsTable tbody not found!');
+    return;
+  }
   
+  console.log('Customer dashboard: Clearing table...');
   tbody.innerHTML = '';
   
   if (userApplications.length === 0) {
+    console.log('Customer dashboard: No applications to display, showing empty message');
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 32px; color: #666;">No applications yet. Click "New Application" to get started.</td></tr>';
     return;
   }
   
-  userApplications.forEach(app => {
+  userApplications.forEach((app, index) => {
+    console.log(`Customer dashboard: Processing application ${index + 1}:`, app.applicationId);
     const row = document.createElement('tr');
     const statusClass = getStatusClass(app.status);
     const dateFormatted = formatDate(app.createdAt);
 
     const isPending = app.status === 'pending';
-    const canDelete = app.status === 'pending' || app.status === 'under review' || app.status === 'rejected';
+    const needsRevision = app.status === 'needs revision';
+    const canEdit = isPending || needsRevision;
+    const canDelete = app.status === 'pending' || app.status === 'under review' || app.status === 'rejected' || needsRevision;
 
     // Pickup schedule removed from table view - shown only in detailed modal
 
@@ -2023,8 +2072,8 @@ function displayApplications() {
       <td>
         <div class="table-actions">
           <button class="action-btn btn-view" onclick="viewApplication('${app.id}')">View</button>
-          ${isPending ? `
-          <button class="action-btn btn-edit" onclick="editApplication('${app.id}')">Edit</button>
+          ${canEdit ? `
+          <button class="action-btn btn-edit" onclick="editApplication('${app.id}')">${needsRevision ? 'Revise' : 'Edit'}</button>
           ` : ''}
           ${canDelete ? `
           <button class="action-btn btn-delete" onclick="deleteApplication('${app.id}')">🗑️</button>
@@ -2034,14 +2083,45 @@ function displayApplications() {
     `;
 
     tbody.appendChild(row);
+    console.log(`Customer dashboard: Added row for application ${index + 1}`);
   });
   
-  console.log('Table rows added:', tbody.children.length);
+  console.log('Customer dashboard: Total table rows added:', tbody.children.length);
+  console.log('Customer dashboard: Final table HTML length:', tbody.innerHTML.length);
 }
 
 // View application details - Similar to staff dashboard
 window.viewApplication = async function(appId) {
-  const application = userApplications.find(app => app.id === appId);
+  // Unsubscribe from any previous real-time listener
+  if (window._appModalUnsubscribe) {
+    window._appModalUnsubscribe();
+    window._appModalUnsubscribe = null;
+  }
+  
+  // Fetch fresh data from Firestore to ensure documents are up-to-date
+  let application = null;
+  try {
+    const appRef = doc(db, 'applications', appId);
+    const appSnap = await getDoc(appRef);
+    if (appSnap.exists()) {
+      application = { id: appSnap.id, ...appSnap.data() };
+      console.log('Fetched fresh app data from Firestore for view:', application);
+      
+      // Update the cached list with fresh data
+      const cachedIndex = userApplications.findIndex(a => a.id === appId);
+      if (cachedIndex !== -1) {
+        userApplications[cachedIndex] = application;
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching fresh application data:', error);
+    application = userApplications.find(app => app.id === appId);
+  }
+  
+  if (!application) {
+    application = userApplications.find(app => app.id === appId);
+  }
+  
   if (!application) return;
   
   // Debug: Log application data
@@ -2080,6 +2160,32 @@ window.viewApplication = async function(appId) {
   `;
   
   modal.style.display = 'flex';
+  
+  // Set up real-time listener for auto-updating documents when uploads complete
+  try {
+    const appRef = doc(db, 'applications', appId);
+    window._appModalUnsubscribe = onSnapshot(appRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const updatedApp = { id: docSnap.id, ...docSnap.data() };
+        console.log('Real-time update received - documents:', updatedApp.documents?.length || 0, 'uploadStatus:', updatedApp.uploadStatus);
+        
+        // Update cache
+        const cachedIndex = userApplications.findIndex(a => a.id === appId);
+        if (cachedIndex !== -1) {
+          userApplications[cachedIndex] = updatedApp;
+        }
+        
+        // Re-render modal content if modal is still open
+        if (modal.style.display === 'flex') {
+          const newHTML = generateApplicationDetailsHTML(updatedApp);
+          detailsDiv.innerHTML = newHTML;
+        }
+      }
+    });
+    console.log('Firestore real-time listener set up for application:', appId);
+  } catch (error) {
+    console.error('Error setting up real-time listener:', error);
+  }
 };
 
 // Generate application details HTML for customer view
@@ -2090,10 +2196,11 @@ function generateApplicationDetailsHTML(app) {
   
   // Documents section
   let documentsHTML = '';
+  const isUploading = app.uploadStatus === 'uploading';
   if (app.documents && app.documents.length > 0) {
     documentsHTML = `
       <div class="detail-section">
-        <h4 class="section-title">📁 Uploaded Documents (${app.documents.length})</h4>
+        <h4 class="section-title">📁 Uploaded Documents (${app.documents.length})${isUploading ? ' <span style="color: #f59e0b; font-size: 12px;">⏳ Some files still uploading...</span>' : ''}</h4>
         <div class="documents-grid">
           ${app.documents.map((doc, index) => {
             const docName = doc.name || `Document ${index + 1}`;
@@ -2141,6 +2248,20 @@ function generateApplicationDetailsHTML(app) {
               </div>
             `;
           }).join('')}
+        </div>
+      </div>
+    `;
+  }
+  
+  // Show uploading status if documents are still being processed
+  if (isUploading && (!app.documents || app.documents.length === 0)) {
+    documentsHTML = `
+      <div class="detail-section">
+        <h4 class="section-title">📁 Uploaded Documents</h4>
+        <div style="text-align: center; padding: 24px; background: #fef3c7; border-radius: 8px; border: 1px solid #fbbf24;">
+          <div style="font-size: 32px; margin-bottom: 8px;">⏳</div>
+          <div style="font-weight: 600; color: #92400e; margin-bottom: 4px;">Documents are being uploaded...</div>
+          <div style="font-size: 13px; color: #a16207;">Please wait or refresh the page in a moment to see your uploaded files.</div>
         </div>
       </div>
     `;
@@ -2275,12 +2396,6 @@ function generateApplicationDetailsHTML(app) {
     
     ${documentsHTML}
     ${pickupHTML}
-    
-    <!-- TEST SECTION - This should always show -->
-    <div class="detail-section" style="background: #ff0000; color: white; padding: 20px;">
-      <h4>🧪 TEST SECTION - Status: ${app.status || 'NO STATUS'}</h4>
-      <p>If you see this red section, the modal is working!</p>
-    </div>
     
     <!-- Always show pickup schedule section for approved apps -->
     ${app.status && app.status.toLowerCase() === 'approved' ? `
@@ -3278,7 +3393,9 @@ function displayApplicationsWithFilter(applications) {
     const dateFormatted = formatDate(app.createdAt);
 
     const isPending = app.status === 'pending';
-    const canDelete = app.status === 'pending' || app.status === 'under review' || app.status === 'rejected';
+    const needsRevision = app.status === 'needs revision';
+    const canEdit = isPending || needsRevision;
+    const canDelete = app.status === 'pending' || app.status === 'under review' || app.status === 'rejected' || needsRevision;
 
     // Pickup schedule removed from table view - shown only in detailed modal
 
@@ -3292,8 +3409,8 @@ function displayApplicationsWithFilter(applications) {
       <td>
         <div class="table-actions">
           <button class="action-btn btn-view" onclick="viewApplication('${app.id}')">View</button>
-          ${isPending ? `
-          <button class="action-btn btn-edit" onclick="editApplication('${app.id}')">Edit</button>
+          ${canEdit ? `
+          <button class="action-btn btn-edit" onclick="editApplication('${app.id}')">${needsRevision ? 'Revise' : 'Edit'}</button>
           ` : ''}
           ${canDelete ? `
           <button class="action-btn btn-delete" onclick="deleteApplication('${app.id}')">🗑️</button>
@@ -3328,6 +3445,7 @@ function getStatusClass(status) {
   const statusMap = {
     'pending': 'pending',
     'under review': 'under-review',
+    'needs revision': 'needs-revision',
     'approved': 'approved',
     'rejected': 'rejected'
   };
@@ -3348,11 +3466,35 @@ function formatDate(timestamp) {
 }
 
 // View application details
-window.viewApplication = function(appId) {
+window.viewApplication = async function(appId) {
   console.log('viewApplication called with appId:', appId);
-  console.log('userApplications:', userApplications);
   
-  const app = userApplications.find(a => a.id === appId);
+  // Fetch fresh data from Firestore to ensure documents are up-to-date
+  let app = null;
+  try {
+    const appRef = doc(db, 'applications', appId);
+    const appSnap = await getDoc(appRef);
+    if (appSnap.exists()) {
+      app = { id: appSnap.id, ...appSnap.data() };
+      console.log('Fetched fresh app data from Firestore:', app);
+      
+      // Update the cached list with fresh data
+      const cachedIndex = userApplications.findIndex(a => a.id === appId);
+      if (cachedIndex !== -1) {
+        userApplications[cachedIndex] = app;
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching fresh application data:', error);
+    // Fallback to cached data
+    app = userApplications.find(a => a.id === appId);
+  }
+  
+  if (!app) {
+    // Final fallback to cache
+    app = userApplications.find(a => a.id === appId);
+  }
+  
   console.log('Found app:', app);
   
   if (!app) {
@@ -3407,6 +3549,15 @@ window.viewApplication = function(appId) {
     <div class="detail-row">
       <div class="detail-label">Rejection Reason:</div>
       <div class="detail-value" style="color: #ef4444;">${app.rejectionReason}</div>
+    </div>
+    ` : ''}
+    ${app.revisionComments ? `
+    <div class="detail-row">
+      <div class="detail-label">📝 Revision Required:</div>
+      <div class="detail-value" style="color: #f59e0b; background: #fffbeb; padding: 12px; border-radius: 6px; border-left: 4px solid #f59e0b;">
+        <strong>Please revise the following:</strong><br>
+        ${app.revisionComments}
+      </div>
     </div>
     ` : ''}
     ${app.reviewedBy ? `
@@ -3637,12 +3788,13 @@ window.editApplication = function(appId) {
       const permitTypeEl = document.getElementById('permitType');
       const applicantNameEl = document.getElementById('applicantName');
       const applicantAddressEl = document.getElementById('applicantAddress');
-      const applicantMobileEl = document.getElementById('applicantMobile');
+      const applicantMobileIndividualEl = document.getElementById('applicantMobileIndividual');
+      const applicantMobileCompanyEl = document.getElementById('applicantMobileCompany');
       const applicationDetailsEl = document.getElementById('applicationDetailsInput');
       const appLatitudeEl = document.getElementById('appLatitude');
       const appLongitudeEl = document.getElementById('appLongitude');
       
-      if (!documentTypeEl || !permitTypeEl || !applicantNameEl || !applicantAddressEl || !applicantMobileEl) {
+      if (!documentTypeEl || !permitTypeEl || !applicantNameEl || !applicantAddressEl) {
         console.error('Form elements not found');
         showAlert('Error loading application form. Please try again.', 'error');
         return;
@@ -3792,10 +3944,17 @@ window.editApplication = function(appId) {
             console.log('Address fields populated:', { streetAddress, barangay, municipal, district });
           }
           
-          // Populate mobile number
-          if (applicantMobileEl) {
-            applicantMobileEl.value = app.applicantMobile || '';
-            console.log('Mobile number populated:', app.applicantMobile);
+          // Populate mobile number based on applicant type
+          if (app.applicantType === 'company' || app.applicantName?.length > 50) {
+            if (applicantMobileCompanyEl) {
+              applicantMobileCompanyEl.value = app.applicantMobile || '';
+              console.log('Company mobile number populated:', app.applicantMobile);
+            }
+          } else {
+            if (applicantMobileIndividualEl) {
+              applicantMobileIndividualEl.value = app.applicantMobile || '';
+              console.log('Individual mobile number populated:', app.applicantMobile);
+            }
           }
           
           // Populate application details
@@ -4046,8 +4205,12 @@ if (createAppBtn) {
       clearFormData('newApplicationForm');
       window.editingAppId = null;
       window.existingDocuments = [];
-      const submitBtn = document.querySelector('#newApplicationForm button[type="submit"]');
-      submitBtn.textContent = 'Submit Application';
+      const submitBtn = document.getElementById('submitStep5') || document.querySelector('#newApplicationForm button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.textContent = 'Submit Application';
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('loading');
+      }
       resetFormSteps();
       navigateToSection('myApplicationsSection');
     });
@@ -4240,48 +4403,71 @@ document.getElementById('submitStep5').addEventListener('click', async (e) => {
     return;
   }
   
-  // Validate all previous steps before submission
-  let allStepsValid = true;
+  // INSTANT FEEDBACK: Show processing state immediately
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<span style="display: inline-flex; align-items: center; gap: 8px;"><svg style="width: 16px; height: 16px; animation: spin 1s linear infinite;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Processing...</span>';
+  submitBtn.classList.add('loading');
+  
+  // OPTIMIZED: Quick validation with early success feedback
+  const validationPromises = [];
   for (let step = 1; step <= 4; step++) {
-    const { isValid } = validateStep(step);
-    if (!isValid) {
-      allStepsValid = false;
-      console.log(`Step ${step} validation failed`);
-      // Go to the first invalid step
-      goToStep(step);
-      return;
-    }
+    validationPromises.push(Promise.resolve(validateStep(step)));
   }
   
-  // Check if ALL required documents are uploaded
+  try {
+    const validationResults = await Promise.all(validationPromises);
+    const firstInvalidStep = validationResults.findIndex(({ isValid }) => !isValid);
+    
+    if (firstInvalidStep !== -1) {
+      // Reset button and go to invalid step
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = 'Submit Application';
+      submitBtn.classList.remove('loading');
+      goToStep(firstInvalidStep + 1);
+      return;
+    }
+  } catch (error) {
+    console.error('Validation error:', error);
+    // Reset button on validation error
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = 'Submit Application';
+    submitBtn.classList.remove('loading');
+    showAlert('Validation error. Please try again.', 'error');
+    return;
+  }
+  
+  // OPTIMIZED: Fast document validation
   const documentType = document.getElementById('documentType')?.value || '';
   const permitType = document.getElementById('permitType')?.value || '';
   const requirements = documentRequirements[permitType] || [];
   
-  let allDocumentsUploaded = true;
-  let missingDocuments = [];
-  
-  for (let index = 0; index < requirements.length; index++) {
+  // Quick parallel document check
+  const documentChecks = requirements.map(async (requirement, index) => {
     const uploadField = document.getElementById(`docUpload_${index}`);
-    const hasFile = uploadField && uploadField.files && uploadField.files.length > 0;
-    
-    if (!hasFile) {
-      allDocumentsUploaded = false;
-      missingDocuments.push(requirements[index]);
-    }
-  }
+    return {
+      requirement,
+      hasFile: uploadField && uploadField.files && uploadField.files.length > 0
+    };
+  });
   
-  // Also check for default upload field if no dynamic fields
+  const documentResults = await Promise.all(documentChecks);
+  const missingDocuments = documentResults.filter(({ hasFile }) => !hasFile).map(({ requirement }) => requirement);
+  
+  // Check default upload field if no dynamic requirements
   if (requirements.length === 0) {
     const defaultUploadField = document.getElementById('documentUpload');
     if (!defaultUploadField || !defaultUploadField.files || defaultUploadField.files.length === 0) {
-      allDocumentsUploaded = false;
       missingDocuments.push('At least one document');
     }
   }
   
-  if (!allDocumentsUploaded) {
-    // Show field-level error for missing documents
+  if (missingDocuments.length > 0) {
+    // Reset button and show error
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = 'Submit Application';
+    submitBtn.classList.remove('loading');
+    
+    // Show field-level error
     const uploadContainer = document.getElementById('dynamicDocumentUploads');
     if (uploadContainer) {
       uploadContainer.classList.add('field-error');
@@ -4293,20 +4479,64 @@ document.getElementById('submitStep5').addEventListener('click', async (e) => {
     return;
   }
   
-  // Disable button to prevent spam
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Submitting...';
-  submitBtn.classList.add('loading');
+  // UPDATE: Show submitting state
+  submitBtn.innerHTML = '<span style="display: inline-flex; align-items: center; gap: 8px;"><svg style="width: 16px; height: 16px; animation: spin 1s linear infinite;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Submitting...</span>';
+  
+  const form = document.getElementById('newApplicationForm');
+  if (!form) {
+    console.error('Form not found: newApplicationForm');
+    showAlert('Application form not found. Please refresh the page.', 'error');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit Application';
+    submitBtn.classList.remove('loading');
+    return;
+  }
   
   try {
-    // Submit the form
-    document.getElementById('newApplicationForm').dispatchEvent(new Event('submit'));
+    // OPTIMISTIC: Show immediate success feedback
+    submitBtn.innerHTML = '<span style="display: inline-flex; align-items: center; gap: 8px;"><svg style="width: 16px; height: 16px;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>Application Submitted!</span>';
+    
+    // OPTIMISTIC: Show success message immediately
+    if (typeof showAlert === 'function') {
+      showAlert('Application submitted successfully! You will be redirected shortly...', 'success');
+    }
+    
+    // OPTIMISTIC: Start redirect animation
+    const dashboardSection = document.getElementById('myApplicationsSection');
+    if (dashboardSection) {
+      // Pre-activate the target section for smooth transition
+      document.querySelectorAll('.page-section').forEach(section => {
+        section.classList.remove('active');
+      });
+      dashboardSection.classList.add('active');
+      
+      // Update navigation
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active');
+      });
+      const targetNav = document.querySelector('a[href="#my-applications"]');
+      if (targetNav) {
+        targetNav.classList.add('active');
+      }
+    }
+    
+    // Submit the form with minimal delay
+    setTimeout(() => {
+      // Use requestSubmit() for proper form submission that triggers all event listeners
+      if (form.requestSubmit) {
+        form.requestSubmit();
+      } else {
+        // Fallback for older browsers - create a proper submit event
+        const submitEvent = new Event('submit', { bubbles: true, cancelable: true });
+        form.dispatchEvent(submitEvent);
+      }
+    }, 100);
   } catch (error) {
     console.error('Submission error:', error);
     showAlert('An error occurred while submitting. Please try again.', 'error');
     // Re-enable button on error
     submitBtn.disabled = false;
-    submitBtn.textContent = 'Submit Application';
+    submitBtn.innerHTML = 'Submit Application';
     submitBtn.classList.remove('loading');
   }
 });
@@ -6135,15 +6365,17 @@ if (appMapSearchBtn && appMapSearchInput) {
 document.getElementById('newApplicationForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   
-  const documentType = document.getElementById('documentType').value;
-  const permitType = document.getElementById('permitType').value;
+  const documentType = document.getElementById('documentType')?.value || '';
+  const permitType = document.getElementById('permitType')?.value || '';
   const applicantType = document.querySelector('input[name="applicantType"]:checked')?.value || 'personal';
-  const district = document.getElementById('district').value;
-  const municipal = document.getElementById('municipal').value;
-  const barangay = document.getElementById('barangay').value;
-  const streetAddress = document.getElementById('streetAddress').value;
-  const applicantMobile = document.getElementById('applicantMobile').value;
-  const applicationDetails = document.getElementById('applicationDetailsInput').value;
+  const district = document.getElementById('district')?.value || '';
+  const municipal = document.getElementById('municipal')?.value || '';
+  const barangay = document.getElementById('barangay')?.value || '';
+  const streetAddress = document.getElementById('streetAddress')?.value || '';
+  const applicantMobile = applicantType === 'personal'
+    ? document.getElementById('applicantMobileIndividual')?.value || ''
+    : document.getElementById('applicantMobileCompany')?.value || '';
+  const applicationDetails = document.getElementById('applicationDetailsInput')?.value || '';
   
   // Construct complete address
   const applicantAddress = `${streetAddress}, ${barangay}, ${municipal}, ${district}`;
@@ -6151,10 +6383,10 @@ document.getElementById('newApplicationForm').addEventListener('submit', async (
   // Get applicant name based on type
   let applicantName = '';
   if (applicantType === 'personal') {
-    const firstName = document.getElementById('firstName').value;
-    const middleName = document.getElementById('middleName').value;
-    const lastName = document.getElementById('lastName').value;
-    const suffix = document.getElementById('suffix').value;
+    const firstName = document.getElementById('firstName')?.value || '';
+    const middleName = document.getElementById('middleName')?.value || '';
+    const lastName = document.getElementById('lastName')?.value || '';
+    const suffix = document.getElementById('suffix')?.value || '';
     
     let fullName = `${firstName} ${middleName ? middleName + ' ' : ''}${lastName}`.trim();
     if (suffix) {
@@ -6162,7 +6394,7 @@ document.getElementById('newApplicationForm').addEventListener('submit', async (
     }
     applicantName = fullName;
   } else {
-    const companyName = document.getElementById('companyName').value;
+    const companyName = document.getElementById('companyName')?.value || '';
     applicantName = companyName;
   }
   
@@ -6180,9 +6412,43 @@ document.getElementById('newApplicationForm').addEventListener('submit', async (
   await initEditIndexedDB();
   
   for (let index = 0; index < requirements.length; index++) {
-    const uploadField = document.getElementById(`docUpload_${index}`);
-    if (uploadField && uploadField.files && uploadField.files[0]) {
-      const file = uploadField.files[0];
+    let file = null;
+    
+    // Try to get file from sessionStorage first (where it's stored after selection)
+    try {
+      const storedFileData = sessionStorage.getItem(`docUpload_${index}`);
+      if (storedFileData) {
+        const fileData = JSON.parse(storedFileData);
+        
+        // Convert base64 back to File object
+        const base64Data = fileData.base64.split(',')[1]; // Remove data URL prefix
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        const blob = new Blob([bytes], { type: fileData.type });
+        file = new File([blob], fileData.name, { type: fileData.type, lastModified: fileData.lastModified });
+        
+        console.log(`Retrieved file ${fileData.name} from sessionStorage for upload`);
+      }
+    } catch (error) {
+      console.error('Error retrieving file from sessionStorage:', error);
+    }
+    
+    // Fallback: Try to get file from input element directly
+    if (!file) {
+      const uploadField = document.getElementById(`docUpload_${index}`);
+      if (uploadField && uploadField.files && uploadField.files[0]) {
+        file = uploadField.files[0];
+        console.log(`Retrieved file ${file.name} from input element for upload`);
+      }
+    }
+    
+    // If we have a file, process it for upload
+    if (file) {
       if (file.size > MAX_FILE_SIZE) {
         if (typeof showAlert === 'function') {
           showAlert(`File "${file.name}" exceeds ${MAX_FILE_SIZE_MB}MB limit.`, 'warning');
@@ -6197,11 +6463,14 @@ document.getElementById('newApplicationForm').addEventListener('submit', async (
       try {
         await storeEditFileInIndexedDB(fileId, file, requirements[index], appId);
         filesToUpload.push({ fileId, file, requirement: requirements[index], index });
+        console.log(`File ${file.name} prepared for background upload`);
       } catch (dbError) {
         console.error('Failed to store file in IndexedDB:', dbError);
         // Still try to upload directly
         filesToUpload.push({ fileId, file, requirement: requirements[index], index });
       }
+    } else {
+      console.warn(`No file found for requirement index ${index}: ${requirements[index]}`);
     }
   }
   
@@ -6258,17 +6527,35 @@ document.getElementById('newApplicationForm').addEventListener('submit', async (
     window.editingAppId = null;
     window.existingDocuments = [];
     
-    // Reset button
-    const submitBtn = document.getElementById('submitStep5');
-    if (submitBtn) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Submit Application';
-      submitBtn.classList.remove('loading');
-    }
+    // Reset ALL submit buttons to prevent stuck loading state
+    const submitBtns = [
+      document.getElementById('submitStep5'),
+      document.querySelector('#newApplicationForm button[type="submit"]'),
+      document.querySelector('button.submit-btn')
+    ];
     
-    // BACKGROUND: Upload files after redirect
+    submitBtns.forEach(btn => {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Submit Application';
+        btn.classList.remove('loading');
+        console.log('Reset submit button:', btn.id || btn.className);
+      }
+    });
+    
+    // BACKGROUND: Upload files after redirect with progress indicator
+    console.log(`Preparing to upload ${filesToUpload.length} files in background...`);
     if (filesToUpload.length > 0) {
+      // Log file details for debugging
+      filesToUpload.forEach(({ file, requirement, index }) => {
+        console.log(`File ${index + 1}: ${file.name} (${file.size} bytes) - Requirement: ${requirement}`);
+      });
+      
+      // Show upload progress notification
+      showUploadProgressNotification(filesToUpload.length);
       backgroundUploadFiles(appRef.id || window.editingAppId, filesToUpload);
+    } else {
+      console.log('No files to upload - application submitted without files');
     }
     
     // Refresh applications list
@@ -6277,14 +6564,125 @@ document.getElementById('newApplicationForm').addEventListener('submit', async (
   } catch (error) {
     console.error('Error submitting application:', error);
     showAlert('Error submitting application. Please try again.', 'error');
-    const submitBtn = document.getElementById('submitStep5');
-    if (submitBtn) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Submit Application';
-      submitBtn.classList.remove('loading');
-    }
+    // Reset ALL submit buttons on error
+    const submitBtns = [
+      document.getElementById('submitStep5'),
+      document.querySelector('#newApplicationForm button[type="submit"]'),
+      document.querySelector('button.submit-btn')
+    ];
+    
+    submitBtns.forEach(btn => {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Submit Application';
+        btn.classList.remove('loading');
+        console.log('Reset submit button on error:', btn.id || btn.className);
+      }
+    });
   }
 });
+
+// Upload progress notification function
+function showUploadProgressNotification(fileCount) {
+  // Create progress notification element
+  const notification = document.createElement('div');
+  notification.id = 'uploadProgressNotification';
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 16px 20px;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    z-index: 10000;
+    max-width: 350px;
+    animation: slideInRight 0.3s ease-out;
+  `;
+  
+  notification.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <div style="width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+        <svg style="width: 20px; height: 20px; animation: spin 1s linear infinite;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      </div>
+      <div style="flex: 1;">
+        <div style="font-weight: 600; margin-bottom: 4px;">Uploading Documents</div>
+        <div style="font-size: 14px; opacity: 0.9;">${fileCount} file${fileCount > 1 ? 's' : ''} being uploaded in background...</div>
+        <div style="margin-top: 8px; background: rgba(255,255,255,0.2); border-radius: 6px; height: 4px; overflow: hidden;">
+          <div id="uploadProgressBar" style="height: 100%; background: white; border-radius: 6px; width: 0%; transition: width 0.3s ease;"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Add CSS animation
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes slideInRight {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  `;
+  document.head.appendChild(style);
+  
+  document.body.appendChild(notification);
+  
+  // Auto-remove after 30 seconds (fallback)
+  setTimeout(() => {
+    const existingNotification = document.getElementById('uploadProgressNotification');
+    if (existingNotification) {
+      existingNotification.remove();
+    }
+  }, 30000);
+}
+
+// Update upload progress
+function updateUploadProgress(percentage, message) {
+  const notification = document.getElementById('uploadProgressNotification');
+  const progressBar = document.getElementById('uploadProgressBar');
+  
+  if (notification && progressBar) {
+    progressBar.style.width = `${Math.min(percentage, 100)}%`;
+    
+    // Update message if provided
+    if (message) {
+      const messageElement = notification.querySelector('div[style*="font-size: 14px"]');
+      if (messageElement) {
+        messageElement.textContent = message;
+      }
+    }
+    
+    // Complete notification
+    if (percentage >= 100) {
+      setTimeout(() => {
+        notification.innerHTML = `
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 40px; height: 40px; background: rgba(34, 197, 94, 0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+              <svg style="width: 20px; height: 20px;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+              </svg>
+            </div>
+            <div style="flex: 1;">
+              <div style="font-weight: 600;">Upload Complete!</div>
+              <div style="font-size: 14px; opacity: 0.9;">All documents uploaded successfully</div>
+            </div>
+          </div>
+        `;
+        
+        // Remove after 3 seconds
+        setTimeout(() => notification.remove(), 3000);
+      }, 500);
+    }
+  }
+}
 
 // Background file upload function with IndexedDB persistence
 async function backgroundUploadFiles(appId, filesToUpload) {
@@ -6296,19 +6694,32 @@ async function backgroundUploadFiles(appId, filesToUpload) {
   const uploadedDocs = [];
   const failedUploads = [];
   
-  // Upload all files in parallel with retry logic
+  // Upload all files in parallel with retry logic and progress tracking
+  let completedUploads = 0;
+  const totalFiles = filesToUpload.length;
+  
   const uploadPromises = filesToUpload.map(async ({ fileId, file, requirement, index }) => {
     try {
+      // Update progress
+      completedUploads++;
+      const progress = (completedUploads / totalFiles) * 100;
+      updateUploadProgress(progress, `Uploading ${file.name}...`);
+      
+      console.log(`Starting upload for ${file.name} (${file.size} bytes)`);
+      
       const formData = new FormData();
       formData.append('file', file);
       formData.append('folder', 'denr-permits');
       
+      console.log(`Sending upload request for ${file.name}...`);
       const uploadResponse = await fetch('/upload-file-to-cloudinary', {
         method: 'POST',
         body: formData
       });
       
+      console.log(`Upload response status for ${file.name}: ${uploadResponse.status}`);
       const uploadResult = await uploadResponse.json();
+      console.log(`Upload result for ${file.name}:`, uploadResult);
       
       if (uploadResult.success) {
         // Remove from IndexedDB on success
@@ -6338,6 +6749,13 @@ async function backgroundUploadFiles(appId, filesToUpload) {
   // Wait for all uploads
   const results = await Promise.all(uploadPromises);
   const successfulUploads = results.filter(doc => doc !== null);
+  
+  // Final progress update
+  if (successfulUploads.length > 0) {
+    updateUploadProgress(100, `Successfully uploaded ${successfulUploads.length} of ${totalFiles} files`);
+  } else {
+    updateUploadProgress(0, 'Upload failed. Files will retry when connection returns.');
+  }
   
   // If some uploads failed due to network, they remain in IndexedDB for retry
   if (failedUploads.length > 0) {
@@ -6384,6 +6802,11 @@ async function backgroundUploadFiles(appId, filesToUpload) {
         updatedAt: serverTimestamp()
       });
       console.log(`Background upload: ${successfulUploads.length} new files uploaded, ${failedUploads.length} pending, total: ${allDocuments.length} documents`);
+      
+      // Refresh applications list so the UI shows the updated documents
+      if (typeof fetchUserApplications === 'function') {
+        fetchUserApplications();
+      }
     } catch (error) {
       console.error('Error updating application with documents:', error);
     }
