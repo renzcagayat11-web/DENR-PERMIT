@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Create Application Form - DENR-CENRO Sta. Cruz</title>
-  <link rel="stylesheet" href="../assets/css/styles.css">
-  <link rel="stylesheet" href="../assets/css/customer-dashboard.css">
-  <link rel="stylesheet" href="../assets/css/leaflet.css">
+  <link rel="stylesheet" href="assets/css/styles.css">
+  <link rel="stylesheet" href="assets/css/customer-dashboard.css">
+  <link rel="stylesheet" href="assets/css/leaflet.css">
 </head>
 <body>
   <!-- Top Navigation Header -->
@@ -14,7 +14,7 @@
     <div class="container nav-inner">
       <div class="brand-left">
         <a href="customer-dashboard.html" class="logo-link">
-          <img src="../assets/images/logo.png" alt="DENR" class="logo" />
+          <img src="assets/images/logo.png" alt="DENR" class="logo" />
         </a>
         <span class="brand-title">DENR-CENRO Sta. Cruz</span>
       </div>
@@ -292,7 +292,7 @@
     modalConfirmBtn.addEventListener('click', () => {
       if (currentFileName) {
         const link = document.createElement('a');
-        link.href = `../assets/form/${currentFileName}`;
+        link.href = `assets/form/${currentFileName}`;
         link.download = currentFileName;
         document.body.appendChild(link);
         link.click();
