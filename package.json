@@ -4,7 +4,9 @@
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
-    "serve-web": "npx http-server -c-1 ."
+    "serve-web": "npx http-server -c-1 .",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "preview": "wrangler dev --config wrangler.jsonc"
   },
   "dependencies": {
     "body-parser": "^1.20.2",
