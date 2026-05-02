@@ -16,7 +16,7 @@
       "enabled": true
     },
     "assets": {
-      "directory": "deploy"
+      "directory": "public"
     },
     "compatibility_flags": [
       "nodejs_compat"

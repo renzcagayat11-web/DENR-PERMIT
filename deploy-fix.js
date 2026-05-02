@@ -14,7 +14,7 @@ const config = {
     "enabled": true
   },
   "assets": {
-    "directory": "deploy"
+    "directory": "public"
   },
   "compatibility_flags": [
     "nodejs_compat"
@@ -23,4 +23,4 @@ const config = {
 
 // Write the configuration file
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-console.log('Configuration updated to use deploy directory');
+console.log('Configuration updated to use public directory');

@@ -3,4 +3,6 @@ serviceAccountKey.json
 *.log
 /.env
 deploy/
+public/
+wrangler.jsonc
 .wrangler/
