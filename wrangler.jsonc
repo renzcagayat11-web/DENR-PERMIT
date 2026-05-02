@@ -1,0 +1,13 @@
+{
+  "name": "denrpermit",
+  "compatibility_date": "2026-05-02",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "deploy"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}

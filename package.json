@@ -5,8 +5,22 @@
   "scripts": {
     "start": "node server/server.js",
     "serve-web": "npx http-server -c-1 .",
-    "deploy": "node deploy-fix.js && npx wrangler deploy --config wrangler.jsonc",
+    "predeploy": "node deploy-fix.js",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
     "preview": "wrangler dev --config wrangler.jsonc"
+  },
+  "wrangler": {
+    "name": "denrpermit",
+    "compatibility_date": "2026-05-02",
+    "observability": {
+      "enabled": true
+    },
+    "assets": {
+      "directory": "deploy"
+    },
+    "compatibility_flags": [
+      "nodejs_compat"
+    ]
   },
   "dependencies": {
     "body-parser": "^1.20.2",
